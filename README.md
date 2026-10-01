@@ -200,6 +200,25 @@ output/
 - **ZIP** : `Télécharger tout` n'inclut que les MP4 terminés, nommés
   `01_sujet.mp4`, `02_...` ; aucune clé API n'y figure.
 
+## Durée des vidéos
+
+La narration est ajustée à la durée demandée plutôt que coupée ou ralentie :
+
+1. le script est calibré sur le débit réel de la voix choisie (`pipeline/tts.py`,
+   ~3,05 mots/s à `+0%`, corrigé par le `rate`) ;
+2. après synthèse, la durée **réelle** de `audio.mp3` est mesurée avec `ffprobe`
+   (edge-tts s'arrête au dernier mot et sous-estime le fichier de 0,3 à 0,9 s) ;
+3. si l'écart dépasse 1 s, le script est régénéré avec le nombre de mots que le
+   débit observé implique — au maximum 3 passes, jamais de boucle infinie ;
+4. la voix n'est jamais étirée ni transposée ; si l'écart persiste, la vidéo est
+   conservée telle quelle et la durée réelle est signalée.
+
+Chaque job expose le diagnostic dans `meta` et dans `duration.json` :
+
+```json
+{ "target_duration": 30, "audio_duration": 29.7, "final_video_duration": 29.8 }
+```
+
 ## Déploiement
 
 L'image embarque FFmpeg et les polices, donc rien à installer côté serveur.

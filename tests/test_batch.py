@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import jobs
-from pipeline import script_writer
+from pipeline import script_writer, tts
 
 
 @pytest.fixture()
@@ -32,7 +32,9 @@ def client(tmp_path, monkeypatch):
     # Deterministic, offline script + metadata.
     monkeypatch.setattr(
         script_writer, "write_script",
-        lambda topic, duration=45, language="français", style="", tone="": f"Script pour {topic}. " * 6,
+        lambda topic, duration=45, language="français", style="", tone="", rate="": (
+            f"Script pour {topic}. " * 6
+        ),
     )
     monkeypatch.setattr(
         script_writer, "write_metadata",
@@ -41,6 +43,19 @@ def client(tmp_path, monkeypatch):
             "thumbnail_prompt": "x",
         },
     )
+
+    # Offline TTS: a speech whose measured duration matches the request, so the
+    # duration-fitting loop converges on the first pass.
+    def fake_synthesize(text, out_path, voice=tts.DEFAULT_VOICE, rate=tts.DEFAULT_RATE):
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(out_path).write_bytes(b"mp3")
+        words = [
+            tts.WordTiming(text=w, start=i * 0.3, end=i * 0.3 + 0.25)
+            for i, w in enumerate(text.split())
+        ]
+        return tts.Speech(audio_path=Path(out_path), duration=30.0, words=words)
+
+    monkeypatch.setattr(tts, "synthesize", fake_synthesize)
 
     # Fake renderer: writes a real file so filesystem checks are meaningful.
     def fake_generate(text, out_path, on_step=None, info_out=None, **kwargs):
@@ -53,6 +68,11 @@ def client(tmp_path, monkeypatch):
             Path(info_out).mkdir(parents=True, exist_ok=True)
             (Path(info_out) / "audio.mp3").write_bytes(b"audio")
             (Path(info_out) / "subtitles.ass").write_text("[Script Info]", encoding="utf-8")
+            (Path(info_out) / "duration.json").write_text(
+                json.dumps({"target_duration": 30, "audio_duration": 30.0,
+                            "final_video_duration": 30.0}),
+                encoding="utf-8",
+            )
         return Path(out_path)
 
     monkeypatch.setattr(jobs, "generate", fake_generate)
@@ -141,11 +161,9 @@ def test_batch_isolated_failure(client):
 
 def test_zip_contains_only_completed_videos(client):
     original = jobs.generate
-    calls = {"n": 0}
 
     def flaky(text, out_path, on_step=None, info_out=None, **kwargs):
-        calls["n"] += 1
-        if calls["n"] == 2:
+        if "B" in text:
             raise RuntimeError("boom")
         return original(text, out_path, on_step=on_step, info_out=info_out, **kwargs)
 
@@ -164,7 +182,7 @@ def test_zip_contains_only_completed_videos(client):
         names = zf.namelist()
         assert len(names) == status["counts"]["completed"] == 2
         assert all(n.endswith(".mp4") for n in names)
-        assert names[0].startswith("01_") or names[0].startswith("03_")
+        assert not any(n.startswith("02_") for n in names)  # failed job B excluded
         assert not any("key" in n.lower() or ".env" in n for n in names)
 
 

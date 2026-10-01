@@ -17,6 +17,8 @@ import re
 
 import requests
 
+from pipeline import tts
+
 SYSTEM = (
     "Tu es un scénariste de vidéos courtes verticales (TikTok, Reels, Shorts). "
     "Tu écris en français, ton direct, phrases courtes, une idée par phrase. "
@@ -177,17 +179,19 @@ CLOSERS = [
 ]
 
 
-def _local_script(topic: str, duration: int) -> str:
+def _local_script(topic: str, duration: int, words: int | None = None) -> str:
     topic = topic.strip().rstrip(".!?")
-    target_words = max(40, int(duration * 2.6))
+    target_words = words or tts.estimate_words(duration)
     rng = random.Random(topic)
 
     sentences = [rng.choice(HOOKS).format(topic=topic)]
     body = BODY[:]
     rng.shuffle(body)
+    # Cycle through the body pool so long targets (e.g. 60s) stay reachable;
+    # a fixed 8-sentence cap used to leave long videos ~40% short.
     index = 0
-    while len(" ".join(sentences).split()) < target_words - 12 and index < len(body):
-        sentences.append(body[index])
+    while len(" ".join(sentences).split()) < target_words - 12 and index < 400:
+        sentences.append(body[index % len(body)])
         index += 1
     sentences.append(rng.choice(CLOSERS))
     return " ".join(sentences)
@@ -209,9 +213,15 @@ def write_script(
     language: str = "français",
     style: str = "",
     tone: str = "",
+    rate: str = "",
 ) -> str:
-    """Generate a narration script sized for the target duration."""
-    words = int(duration * 2.6)  # ~150 words/min spoken pace
+    """Generate a narration script sized for the target duration.
+
+    `rate` (the edge-tts rate string, e.g. "-5%") keeps the word budget in sync
+    with the chosen voice pace: a slower read needs fewer words for the same
+    number of seconds.
+    """
+    words = tts.estimate_words(duration, rate or tts.DEFAULT_RATE)
     if _llm_available():
         extra = ""
         if style:
@@ -220,15 +230,21 @@ def write_script(
             extra += f"Ton : {tone}\n"
         prompt = (
             f"Sujet : {topic}\nLangue : {language}\n{extra}"
-            f"Écris la narration d'une vidéo de {duration} secondes, environ {words} mots. "
+            f"Écris la narration d'une vidéo de {duration} secondes, environ {words} mots "
+            f"({words * 2} signes environ). "
             "Pas de titres, pas de didascalies : uniquement le texte à lire à voix haute, "
             "en un seul paragraphe."
         )
         try:
-            return _clean(_chat(prompt))
+            llm_text = _clean(_chat(prompt))
+            # A truncated/empty completion would poison the duration fitting;
+            # fall back to the local writer when the reply is far too short.
+            if len(llm_text.split()) >= max(15, round(words * 0.5)):
+                return llm_text
+            print("[script] réponse LLM trop courte; génération locale")
         except Exception as exc:  # noqa: BLE001 - fall back to the local writer
             print(f"[script] LLM indisponible ({exc}); génération locale")
-    return _clean(_local_script(topic, duration))
+    return _clean(_local_script(topic, duration, words))
 
 
 STOPWORDS = {

@@ -45,6 +45,11 @@ STEP_PROGRESS = {
     "completed": 100,
 }
 
+# Duration fitting: accept a narration whose measured audio lands within this
+# many seconds of the request, else retry (initial try + 2 retries, never more).
+DURATION_TOLERANCE = 1.0
+MAX_DURATION_ATTEMPTS = 3
+
 
 def step_progress(step: str, sub: int | None = None) -> int:
     """Progress for a stage, optionally refined by a 0-100 intra-stage value."""
@@ -138,6 +143,51 @@ def _job_dir(job_id: str, batch_id: str | None) -> Path:
     return (OUTPUT_DIR / batch_id / job_id) if batch_id else (OUTPUT_DIR / job_id)
 
 
+def _fit_speech(text: str, req: dict, target: float, work: Path, attempts: int = MAX_DURATION_ATTEMPTS):
+    """Synthesize `text`, measure it, and retry until close to `target`.
+
+    Only the narration length is adjusted (never time-stretched), and at most
+    `attempts` passes are made. Returns the best `Speech` found plus the text
+    that produced it, so the archived script matches the audio.
+    """
+    voice = req.get("voice", tts.DEFAULT_VOICE)
+    rate = req.get("rate", tts.DEFAULT_RATE)
+    pace = tts.BASE_WORDS_PER_SECOND * tts.rate_factor(rate)
+    probe_dir = work / ".fit"
+    probe_dir.mkdir(parents=True, exist_ok=True)
+
+    best_speech = None
+    best_text = text
+    for attempt in range(attempts):
+        speech = tts.synthesize(text, probe_dir / f"voice_{attempt}.mp3", voice=voice, rate=rate)
+        print(f"[duration] essai {attempt + 1}/{attempts} : {speech.duration:.2f}s "
+              f"({len(speech.words)} mots) pour une cible de {target}s")
+        if best_speech is None or abs(speech.duration - target) < abs(best_speech.duration - target):
+            best_speech, best_text = speech, text
+        if abs(speech.duration - target) <= DURATION_TOLERANCE:
+            break
+        if attempt < attempts - 1:
+            # Ask for exactly the word count the observed pace implies.
+            needed = max(20, round(len(speech.words) * (target / max(speech.duration, 0.1))))
+            text = script_writer.write_script(
+                req.get("topic", ""),
+                duration=max(1, round(needed / pace)),
+                language=req.get("language", "français"),
+                style=req.get("style", ""),
+                tone=req.get("tone", ""),
+                rate=rate,
+            )
+    # Keep the chosen take at a stable path: the probe folder is removed next
+    # and the renderer needs the audio to survive until compose.
+    if best_speech is not None:
+        best_speech = tts.retime(best_speech, target, DURATION_TOLERANCE)
+        final_audio = work / "voice_fit.mp3"
+        shutil.copy(best_speech.audio_path, final_audio)
+        best_speech.audio_path = final_audio
+    shutil.rmtree(probe_dir, ignore_errors=True)
+    return best_speech, best_text
+
+
 def produce(job_id: str, req: dict) -> None:
     work = _job_dir(job_id, req.get("batch_id"))
     work.mkdir(parents=True, exist_ok=True)
@@ -193,6 +243,18 @@ def produce(job_id: str, req: dict) -> None:
             if not clips:
                 raise ValueError(f"Aucun clip vidéo dans {clips_dir}")
 
+        target = float(req["duration"]) if req.get("duration") else None
+        speech = None
+        if req.get("auto_script") and req.get("topic"):
+            # Fit the narration to the requested duration (max 3 TTS passes);
+            # a user-supplied text is respected as-is.
+            speech, script = _fit_speech(script, req, target, work)
+            (work / "script.json").write_text(
+                json.dumps({"topic": req.get("topic", ""), "script": script},
+                           ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
         generate(
             text=script,
             out_path=video_path,
@@ -205,6 +267,8 @@ def produce(job_id: str, req: dict) -> None:
             logo_text=req.get("logo") or None,
             on_step=on_step,
             info_out=work,
+            speech=speech,
+            target_duration=target,
         )
         # Intermediate artefacts required by the batch layout.
         (work / "scenes.json").write_text(
@@ -217,6 +281,21 @@ def produce(job_id: str, req: dict) -> None:
 
         duration = _probe_duration(video_path)
         video_url = storage.upload(video_path, _rel(video_path))
+
+        durations = {}
+        duration_file = work / "duration.json"
+        if duration_file.exists():
+            try:
+                durations = json.loads(duration_file.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001 - diagnostics only
+                durations = {}
+        durations.setdefault("target_duration", target)
+        durations["final_video_duration"] = duration
+        if target and duration and abs(duration - target) > DURATION_TOLERANCE:
+            print(
+                f"[duration] écart de {duration - target:+.2f}s par rapport à la cible "
+                f"({target}s) ; durée réelle conservée"
+            )
 
         update(
             job_id,
@@ -234,6 +313,9 @@ def produce(job_id: str, req: dict) -> None:
                 "hashtags": metadata["hashtags"],
                 "size_kb": round(video_path.stat().st_size / 1024),
                 "duration": duration,
+                "target_duration": durations.get("target_duration"),
+                "audio_duration": durations.get("audio_duration"),
+                "final_video_duration": durations.get("final_video_duration"),
             },
         )
     except Exception as exc:  # noqa: BLE001 - surface any failure to the client

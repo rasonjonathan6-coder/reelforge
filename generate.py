@@ -10,8 +10,10 @@ Runs entirely on CPU with no API key required.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -50,6 +52,8 @@ def generate(
     logo_text: str | None = None,
     on_step=None,
     info_out: Path | None = None,
+    speech=None,
+    target_duration: float | None = None,
 ) -> Path:
     """Render one reel.
 
@@ -57,6 +61,9 @@ def generate(
     runner, the batch runner) can report genuine progress instead of guessing.
     `info_out`, when given, receives the intermediate artifacts (voice-over,
     subtitles, background) so a caller can archive them per job.
+    `speech` lets a caller pass an already-synthesized voice-over (used by the
+    duration-fitting loop so the TTS is not run twice); when omitted it is
+    synthesized here. `target_duration` is only recorded for diagnostics.
     """
     _ensure_ffmpeg()
     tmp = Path(work_dir) if work_dir else Path(tempfile.mkdtemp(prefix="reel_"))
@@ -68,7 +75,8 @@ def generate(
 
     report("tts", 35)
     print("[1/5] Synthesizing voice-over...")
-    speech = tts.synthesize(text, tmp / "voice.mp3", voice=voice, rate=rate)
+    if speech is None:
+        speech = tts.synthesize(text, tmp / "voice.mp3", voice=voice, rate=rate)
     duration = max(speech.duration, 1.0)
     print(f"      -> {duration:.1f}s of speech, {len(speech.words)} words")
 
@@ -101,9 +109,33 @@ def generate(
         info_out.mkdir(parents=True, exist_ok=True)
         shutil.copy(speech.audio_path, info_out / "audio.mp3")
         shutil.copy(ass, info_out / "subtitles.ass")
+        (info_out / "duration.json").write_text(
+            json.dumps(
+                {
+                    "target_duration": target_duration,
+                    "audio_duration": round(speech.duration, 2),
+                    "final_video_duration": _probe_duration(out_path),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
     print(f"Done: {out_path}")
     return out_path
+
+
+def _probe_duration(path: Path) -> float | None:
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(path)],
+            capture_output=True, text=True, timeout=60,
+        )
+        return round(float(out.stdout.strip()), 2)
+    except Exception:  # noqa: BLE001 - duration is informational
+        return None
 
 
 def _batch_main(args) -> None:
