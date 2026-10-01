@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ReelForge — Générateur de vidéos faceless gratuit</title>
+<style>
+  :root{
+    --bg:#0b0b12; --panel:#14141f; --panel2:#1b1b2a; --line:#2a2a3d;
+    --txt:#ececf5; --muted:#9a9ab0; --accent:#ff7a3d; --accent2:#7c5cff;
+    --ok:#35d07f; --err:#ff5470;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:
+      radial-gradient(900px 500px at 85% -10%, rgba(124,92,255,.20), transparent 60%),
+      radial-gradient(700px 500px at -10% 10%, rgba(255,122,61,.14), transparent 55%),
+      var(--bg);
+    color:var(--txt);font:16px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    min-height:100vh}
+  header{max-width:1180px;margin:0 auto;padding:34px 22px 8px}
+  .brand{display:flex;align-items:center;gap:12px;font-weight:800;letter-spacing:-.02em;font-size:22px}
+  .dot{width:12px;height:12px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 0 22px rgba(255,122,61,.8)}
+  .sub{color:var(--muted);margin-top:8px;max-width:680px}
+  main{max-width:1180px;margin:0 auto;padding:22px;display:grid;grid-template-columns:1.15fr .85fr;gap:22px}
+  @media(max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:18px;padding:22px}
+  label{display:block;font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 8px}
+  textarea,select,input{width:100%;background:#0e0e17;border:1px solid var(--line);color:var(--txt);
+    border-radius:12px;padding:12px 13px;font:inherit;outline:none}
+  textarea{min-height:170px;resize:vertical;line-height:1.55}
+  textarea:focus,select:focus,input:focus{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(124,92,255,.18)}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+  .row3{display:grid;grid-template-columns:1.4fr .6fr;gap:14px;margin-top:16px}
+  .tabs{display:flex;gap:8px;margin-bottom:16px;background:#0e0e17;border:1px solid var(--line);border-radius:12px;padding:5px}
+  .tabs button{margin:0;flex:1;background:transparent;color:var(--muted);border-radius:9px;padding:10px;font-weight:600}
+  .tabs button.active{background:linear-gradient(135deg,var(--accent2),#5b3fd6);color:#fff}
+  button.primary{margin-top:20px;width:100%;border:0;border-radius:13px;padding:15px;font:inherit;font-weight:700;cursor:pointer;
+    background:linear-gradient(135deg,var(--accent),#ff9a3d);color:#1a0f06}
+  button.primary:hover{filter:brightness(1.06)}
+  button.primary:disabled{opacity:.5;cursor:not-allowed}
+  button.ghost{margin-top:10px;width:100%;border:1px solid var(--line);border-radius:12px;padding:12px;font:inherit;font-weight:600;
+    background:#0e0e17;color:var(--txt);cursor:pointer}
+  button.ghost:hover{border-color:var(--accent2)}
+  .preview{display:flex;flex-direction:column;gap:14px}
+  .stage{aspect-ratio:9/16;border-radius:16px;border:1px dashed var(--line);background:#0d0d15;
+    display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+  .stage video{width:100%;height:100%;object-fit:cover;display:none}
+  .stage img.thumb{width:100%;height:100%;object-fit:cover;display:none}
+  .stage .ph{color:var(--muted);text-align:center;padding:24px;font-size:14px}
+  .bar{height:8px;background:#0e0e17;border:1px solid var(--line);border-radius:99px;overflow:hidden}
+  .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));transition:width .4s}
+  .status{display:flex;justify-content:space-between;font-size:13.5px;color:var(--muted)}
+  .pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700}
+  .pill.run{background:rgba(124,92,255,.18);color:#c3b6ff}
+  .pill.done{background:rgba(53,208,127,.16);color:var(--ok)}
+  .pill.err{background:rgba(255,84,112,.16);color:var(--err)}
+  .dl{display:none;text-align:center;text-decoration:none;color:var(--txt);border:1px solid var(--line);
+    border-radius:12px;padding:13px;font-weight:700;background:#0e0e17}
+  .dl:hover{border-color:var(--accent)}
+  .meta{display:none;border-top:1px solid var(--line);padding-top:16px;font-size:14px}
+  .meta h4{margin:0 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+  .meta .block{margin-bottom:14px}
+  .meta .copy{float:right;font-size:11px;color:var(--accent);cursor:pointer;text-transform:none;letter-spacing:0}
+  .tags{display:flex;flex-wrap:wrap;gap:6px}
+  .tag{background:#0e0e17;border:1px solid var(--line);border-radius:99px;padding:4px 10px;font-size:12.5px;color:#c3b6ff}
+  .free{margin-top:16px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+  .free b{color:var(--ok)}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot"></span> ReelForge</div>
+  <p class="sub">Génère de vraies vidéos verticales de 30 à 60 s — script IA, voix off, sous-titres animés, vignette et métadonnées — sans caméra, sans compte, <b style="color:var(--ok)">100 % gratuit et illimité</b>.</p>
+</header>
+
+<main>
+  <section class="card">
+    <div class="tabs">
+      <button id="tab-topic" class="active">À partir d'un sujet</button>
+      <button id="tab-text">J'ai déjà mon script</button>
+    </div>
+
+    <div id="pane-topic">
+      <label for="topic">Sujet de la vidéo</label>
+      <input id="topic" value="3 astuces pour réussir sur TikTok en 2026" placeholder="ex: pourquoi le café te réveille">
+      <div class="row3">
+        <div>
+          <label for="duration">Durée visée</label>
+          <select id="duration">
+            <option value="30">30 s</option>
+            <option value="45" selected>45 s</option>
+            <option value="60">60 s</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="ghost" id="gen-script" style="margin-top:0">Générer le script</button>
+        </div>
+      </div>
+      <div style="margin-top:14px">
+        <label for="text-topic">Script (modifiable)</label>
+        <textarea id="text-topic" placeholder="Le script généré apparaîtra ici…"></textarea>
+      </div>
+    </div>
+
+    <div id="pane-text" class="hidden">
+      <label for="text">Ton script</label>
+      <textarea id="text" placeholder="Écris ici la narration de ta vidéo.">Tu veux créer des vidéos virales sans jamais montrer ton visage ? Une bonne accroche, une voix qui capte l'attention, et des images qui défilent au bon rythme. Pas besoin de caméra, pas besoin de studio. Commence par une phrase forte, puis une idée par phrase. Fais-le maintenant.</textarea>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="voice">Voix</label>
+        <select id="voice"></select>
+      </div>
+      <div>
+        <label for="query">Thème visuel</label>
+        <input id="query" value="city night vertical">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="rate">Débit</label>
+        <select id="rate">
+          <option value="+0%">Normal</option>
+          <option value="+8%" selected>Rapide (+8 %)</option>
+          <option value="+15%">Très rapide (+15 %)</option>
+          <option value="-8%">Lent (-8 %)</option>
+        </select>
+      </div>
+      <div>
+        <label for="stock">Images</label>
+        <select id="stock">
+          <option value="0" selected>Visuels générés</option>
+          <option value="1">Vidéos stock Pexels</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="primary" id="go">Générer ma vidéo</button>
+    <div class="free">Aucune inscription, aucune limite. <b>Gratuit pour toujours</b> — script (LLM gratuit), voix (edge-tts), visuels et montage (FFmpeg) tournent côté serveur, sans coût par vidéo.</div>
+  </section>
+
+  <section class="card preview">
+    <label>Aperçu</label>
+    <div class="stage">
+      <div class="ph" id="ph">Ta vidéo apparaîtra ici.<br>Format 1080×1920 (9:16).</div>
+      <video id="vid" controls playsinline></video>
+      <img id="thumb" class="thumb" alt="vignette">
+    </div>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="status"><span id="step">Prêt</span><span class="pill" id="pill" style="display:none"></span></div>
+    <a class="dl" id="dl" download>Télécharger la vidéo</a>
+    <a class="dl" id="dl-thumb" download style="margin-top:8px">Télécharger la vignette</a>
+
+    <div class="meta" id="meta">
+      <div class="block">
+        <h4>Titre <span class="copy" data-copy="m-title">copier</span></h4>
+        <div id="m-title"></div>
+      </div>
+      <div class="block">
+        <h4>Description <span class="copy" data-copy="m-desc">copier</span></h4>
+        <div id="m-desc"></div>
+      </div>
+      <div class="block">
+        <h4>Hashtags <span class="copy" data-copy="m-tags">copier</span></h4>
+        <div class="tags" id="m-tags"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let timer = null;
+
+async function loadVoices(){
+  try{
+    const r = await fetch('/api/voices'); const d = await r.json();
+    $('voice').innerHTML = d.voices.map(v=>`<option value="${v.id}">${v.label}</option>`).join('');
+  }catch(e){ $('voice').innerHTML = '<option value="fr-FR-DeniseNeural">Denise (femme, FR)</option>'; }
+}
+loadVoices();
+
+// --- tabs ---
+function showTab(which){
+  const topic = which === 'topic';
+  $('tab-topic').classList.toggle('active', topic);
+  $('tab-text').classList.toggle('active', !topic);
+  $('pane-topic').classList.toggle('hidden', !topic);
+  $('pane-text').classList.toggle('hidden', topic);
+}
+$('tab-topic').addEventListener('click', ()=>showTab('topic'));
+$('tab-text').addEventListener('click', ()=>showTab('text'));
+
+// --- AI script generation ---
+$('gen-script').addEventListener('click', async ()=>{
+  const topic = $('topic').value.trim();
+  if(topic.length < 3){ alert('Renseigne un sujet.'); return; }
+  const btn = $('gen-script'); btn.disabled = true; btn.textContent = 'Génération…';
+  try{
+    const r = await fetch('/api/script',{method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({topic, duration: parseInt($('duration').value)})});
+    if(!r.ok) throw new Error((await r.json()).detail || 'Erreur');
+    $('text-topic').value = (await r.json()).script;
+  }catch(e){ alert('Script impossible : '+e.message); }
+  finally{ btn.disabled = false; btn.textContent = 'Générer le script'; }
+});
+
+function setPill(kind, text){
+  const p = $('pill'); p.style.display='inline-block'; p.className='pill '+kind; p.textContent=text;
+}
+function fail(msg){
+  $('go').disabled=false; setPill('err','Échec'); $('step').textContent = msg; $('bar').style.width='0%';
+}
+
+async function generate(){
+  const isTopic = !$('pane-topic').classList.contains('hidden');
+  const text = isTopic ? $('text-topic').value.trim() : $('text').value.trim();
+  const topic = $('topic').value.trim();
+
+  if(isTopic && text.length < 20){ alert('Clique d\'abord sur « Générer le script ».'); return; }
+  if(!isTopic && text.length < 20){ alert('Écris au moins quelques phrases.'); return; }
+
+  $('go').disabled = true;
+  $('vid').style.display='none'; $('thumb').style.display='none'; $('ph').style.display='block';
+  $('dl').style.display='none'; $('dl-thumb').style.display='none'; $('meta').style.display='none';
+  $('bar').style.width='2%'; $('step').textContent='Envoi…'; setPill('run','En cours');
+
+  const body = {
+    text: text, topic: topic, auto_script: false,
+    voice: $('voice').value, rate: $('rate').value,
+    query: $('query').value || 'city night vertical',
+    use_stock: $('stock').value === '1'
+  };
+
+  let jobId;
+  try{
+    const r = await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!r.ok) throw new Error((await r.json()).detail || ('Erreur '+r.status));
+    jobId = (await r.json()).job_id;
+  }catch(e){ fail(e.message); return; }
+
+  clearInterval(timer);
+  timer = setInterval(async ()=>{
+    try{
+      const r = await fetch('/api/jobs/'+jobId); const j = await r.json();
+      $('bar').style.width = Math.max(2, j.progress)+'%';
+      $('step').textContent = j.step || '…';
+      if(j.status === 'done'){
+        clearInterval(timer); $('go').disabled=false; $('bar').style.width='100%';
+        $('step').textContent='Terminé'; setPill('done','Prêt');
+        $('ph').style.display='none';
+        const v = $('vid'); v.style.display='block'; v.src = j.video_url; v.load();
+        const d = $('dl'); d.style.display='block'; d.href = j.video_url; d.setAttribute('download','reel.mp4');
+        if(j.thumbnail_url){
+          const t = $('thumb'); t.style.display='block'; t.src = j.thumbnail_url;
+          const dt = $('dl-thumb'); dt.style.display='block'; dt.href = j.thumbnail_url; dt.setAttribute('download','thumbnail.jpg');
+        }
+        showMeta(j.meta || {});
+      } else if(j.status === 'error'){
+        clearInterval(timer); fail(j.error || 'Erreur inconnue');
+      }
+    }catch(e){ clearInterval(timer); fail(e.message); }
+  }, 1500);
+}
+
+function showMeta(meta){
+  $('m-title').textContent = meta.title || '—';
+  $('m-desc').textContent = meta.description || '—';
+  $('m-tags').innerHTML = (meta.hashtags||[]).map(t=>`<span class="tag">#${t}</span>`).join('') || '—';
+  $('meta').style.display = 'block';
+}
+
+document.querySelectorAll('.copy').forEach(el=>{
+  el.addEventListener('click', ()=>{
+    const id = el.getAttribute('data-copy');
+    const node = $(id);
+    const txt = id === 'm-tags'
+      ? Array.from(node.querySelectorAll('.tag')).map(t=>t.textContent).join(' ')
+      : node.textContent;
+    navigator.clipboard.writeText(txt);
+    const old = el.textContent; el.textContent = 'copié !';
+    setTimeout(()=>el.textContent = old, 1200);
+  });
+});
+
+$('go').addEventListener('click', generate);
+</script>
+</body>
+</html>

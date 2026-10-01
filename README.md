@@ -1,0 +1,192 @@
+# ReelForge — Générateur de vidéos faceless gratuit et illimité
+
+Transforme un sujet (ou un texte) en vraie vidéo verticale 9:16 (1080×1920, 30 fps,
+H.264/AAC) de 30 à 60 s : **script IA, voix off, sous-titres animés, visuels,
+vignette et métadonnées** (titre, description, hashtags).
+
+**Aucune clé API requise. Aucune limite. Aucun GPU.**
+
+## Ce que ça fait / ce que ça ne fait pas
+
+| Fonction | Statut |
+|---|---|
+| Vraie vidéo 30-60 s, format Reels/TikTok/Shorts | ✅ |
+| Script généré depuis un sujet | ✅ générateur local intégré (sans clé) ou LLM gratuit optionnel |
+| Voix off IA (edge-tts, 400+ voix, 100+ langues) | ✅ gratuit, illimité |
+| Sous-titres animés synchronisés mot par mot | ✅ |
+| Visuels qui bougent (dégradés animés ou stock Pexels) | ✅ |
+| Vignette générée par IA + titre incrusté | ✅ |
+| Titre, description, hashtags auto | ✅ |
+| Personnage IA généré qui parle (lip-sync) | ❌ nécessite un GPU ou une API payante |
+| GPU local / CUDA | ❌ ce pipeline est CPU-only (FFmpeg + edge-tts) |
+
+## Démarrage
+
+```bash
+pip install -r requirements.txt
+export PATH=/workspace/bin:$PATH      # ffmpeg (voir plus bas)
+cp .env.example .env                  # puis renseigne NVIDIA_API_KEY
+python app.py                         # http://localhost:8000
+```
+
+Le fichier `.env` est lu automatiquement au démarrage et n'est **jamais
+committé** (il est dans `.gitignore`). C'est là que va la clé NVIDIA.
+
+FFmpeg : si absent et sans droits root :
+
+```bash
+pip install imageio-ffmpeg
+python -c "import imageio_ffmpeg,shutil,os;os.makedirs('/workspace/bin',exist_ok=True);shutil.copy(imageio_ffmpeg.get_ffmpeg_exe(),'/workspace/bin/ffmpeg');os.chmod('/workspace/bin/ffmpeg',0o755)"
+```
+
+> Remarque : les builds FFmpeg minimalistes n'ont pas `drawtext`. C'est pourquoi la
+> vignette est dessinée avec Pillow, pas avec FFmpeg.
+
+## Trois modes d'exécution (config par variables d'environnement)
+
+### 1. Local (par défaut) — zéro infrastructure
+
+```bash
+python app.py
+```
+
+File d'attente en mémoire, stockage disque. Parfait pour un VPS unique.
+
+### 2. File distribuée — Redis + Celery (montée en charge)
+
+```bash
+redis-server --daemonize yes
+QUEUE_BACKEND=celery celery -A celery_app worker --loglevel=info --concurrency=4
+QUEUE_BACKEND=celery REDIS_URL=redis://localhost:6379/0 python app.py
+```
+
+Le serveur web met la tâche en file et répond en millisecondes ; les workers
+fabriquent les vidéos. On ajoute des workers pour absorber la charge, sans
+changer une ligne de code. Si Redis tombe, l'API bascule automatiquement sur le
+pool local.
+
+### 3. Stockage S3 (AWS, Cloudflare R2, MinIO…)
+
+```bash
+STORAGE_BACKEND=s3 \
+S3_BUCKET=mon-bucket \
+S3_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com \
+S3_PUBLIC_BASE_URL=https://cdn.example.com \
+AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... \
+python app.py
+```
+
+Sans `S3_PUBLIC_BASE_URL`, l'API renvoie une URL présignée (7 jours).
+
+## Variables d'environnement
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `QUEUE_BACKEND` | `local` | `local` ou `celery` |
+| `REDIS_URL` | `redis://localhost:6379/0` | broker Celery |
+| `WORKER_COUNT` | `2` | workers du pool local |
+| `STORAGE_BACKEND` | `local` | `local` ou `s3` |
+| `S3_BUCKET`, `S3_PREFIX`, `S3_ENDPOINT_URL`, `S3_REGION` | — | stockage objet |
+| `S3_PUBLIC_BASE_URL` | — | base CDN pour liens directs |
+| `PEXELS_API_KEY` | — | active les vidéos stock |
+| `NVIDIA_API_KEY` | — | script IA via **NVIDIA NIM** (build.nvidia.com, clé gratuite) |
+| `NVIDIA_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | modèle NIM |
+| `GEMINI_API_KEY` | — | script IA via Google Gemini (offre gratuite) |
+| `GROQ_API_KEY` | — | script IA via Groq (offre gratuite) |
+| `OPENROUTER_API_KEY` | — | script IA via OpenRouter |
+| `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL_NAME` | — | endpoint LLM compatible OpenAI |
+
+### Script : trois options
+
+Sans aucune clé, le générateur local intégré écrit le script (accroche, corps,
+question finale) : zéro dépendance réseau, aucune limite.
+
+Pour des scripts plus riches, une clé gratuite suffit — le code choisit tout seul
+le fournisseur, dans cet ordre : **NVIDIA → Gemini → Groq → OpenRouter → endpoint
+personnalisé → local**.
+
+```bash
+NVIDIA_API_KEY=nvapi-xxx python app.py   # build.nvidia.com → clé gratuite (crédits offerts)
+NVIDIA_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b NVIDIA_API_KEY=nvapi-xxx python app.py  # modèle plus rapide
+# ou
+GEMINI_API_KEY=xxx python app.py         # aistudio.google.com → clé gratuite
+```
+
+`GET /api/config` renvoie `llm` pour indiquer le fournisseur actif
+(`nvidia`, `gemini`, `groq`, `openrouter`, `custom` ou `local`).
+
+## API
+
+| Méthode | Route | Rôle |
+|---|---|---|
+| POST | `/api/script` | Sujet → script |
+| POST | `/api/generate` | Crée un job, renvoie `job_id` |
+| GET | `/api/jobs/{id}` | Statut, progression, vidéo, vignette, métadonnées |
+| GET | `/api/voices` | Liste des voix |
+| GET | `/api/config` | Backends actifs |
+| GET | `/videos/{id}.mp4` | Téléchargement |
+
+```bash
+# Script depuis un sujet
+curl -X POST localhost:8000/api/script -H 'Content-Type: application/json' \
+  -d '{"topic":"3 astuces pour dormir mieux","duration":30}'
+
+# Vidéo
+curl -X POST localhost:8000/api/generate -H 'Content-Type: application/json' \
+  -d '{"text":"Ton script...","voice":"fr-FR-DeniseNeural","rate":"+8%","use_stock":false}'
+```
+
+## Déploiement
+
+L'image embarque FFmpeg et les polices, donc rien à installer côté serveur.
+
+```bash
+docker build -t reelforge .
+docker run -p 8000:8000 -e NVIDIA_API_KEY=nvapi-xxx reelforge
+```
+
+Testé : le conteneur génère une vraie vidéo 1080×1920 30 fps (H.264/AAC) de bout
+en bout. `.env` est exclu de l'image via `.dockerignore` — la clé passe
+uniquement par la variable d'environnement du service.
+
+Sur **Render** : `render.yaml` décrit le service (runtime Docker, plan free,
+`NVIDIA_API_KEY` à saisir dans le dashboard). Sur **Fly.io / Railway / VPS** :
+même image, la variable `PORT` est respectée.
+
+⚠️ Sur les hébergeurs à disque éphémère (Render free, Fly sans volume), les
+vidéos de `output/` disparaissent au redémarrage. Pour les conserver, active le
+backend S3 (`STORAGE_BACKEND=s3`) — c'est exactement ce à quoi il sert.
+
+## Architecture
+
+```
+web/index.html        → interface (sujet/script, voix, aperçu, vignette, métadonnées)
+app.py                → API FastAPI (dispatch local ou Celery)
+celery_app.py         → application Celery
+tasks.py              → tâche Celery
+jobs.py               → modèle de job + routine de production partagée
+config.py             → configuration par variables d'environnement
+generate.py           → orchestrateur + CLI
+pipeline/script_writer.py → script + métadonnées (générateur local, LLM optionnel)
+pipeline/thumbnail.py → vignette (fond IA + titre Pillow)
+pipeline/tts.py       → edge-tts + timings mot par mot
+pipeline/subtitles.py → sous-titres ASS karaoké
+pipeline/visuals.py   → visuels générés (ffmpeg) ou stock Pexels
+pipeline/compose.py   → montage final 9:16
+pipeline/storage.py   → stockage local ou S3
+```
+
+## Résilience
+
+- LLM indisponible ou limité → métadonnées générées localement (heuristique), la
+  vidéo se fait quand même.
+- API image indisponible → fond de vignette en dégradé.
+- Pexels indisponible ou sans clé → visuels générés par FFmpeg.
+- Redis indisponible → repli automatique sur le pool local.
+
+## Ligne de commande
+
+```bash
+python generate.py --script examples/script.txt --out output/reel.mp4 --no-stock
+python generate.py --text "Ton script ici..." --out output/reel.mp4
+```
