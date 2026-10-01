@@ -50,6 +50,7 @@ def generate(
     work_dir: Path | None = None,
     clips: list[Path] | None = None,
     logo_text: str | None = None,
+    topic: str = "",
     on_step=None,
     info_out: Path | None = None,
     speech=None,
@@ -64,6 +65,7 @@ def generate(
     `speech` lets a caller pass an already-synthesized voice-over (used by the
     duration-fitting loop so the TTS is not run twice); when omitted it is
     synthesized here. `target_duration` is only recorded for diagnostics.
+    `topic` seeds the stock-footage searches, together with the narration.
     """
     _ensure_ffmpeg()
     tmp = Path(work_dir) if work_dir else Path(tempfile.mkdtemp(prefix="reel_"))
@@ -86,10 +88,12 @@ def generate(
 
     report("visuals", 60)
     print("[3/5] Preparing visuals...")
-    background = visuals.build_background(
-        duration, tmp, query=query, use_stock=use_stock, clips=clips
+    visuals_info = visuals.build_background_info(
+        duration, tmp, query=query, use_stock=use_stock, clips=clips,
+        topic=topic, script=text,
     )
-    print(f"      -> {background.name}")
+    background = visuals_info.path
+    print(f"      -> {background.name} ({visuals_info.message})")
 
     report("compose", 75)
     print("[4/5] Composing final video...")
@@ -109,6 +113,19 @@ def generate(
         info_out.mkdir(parents=True, exist_ok=True)
         shutil.copy(speech.audio_path, info_out / "audio.mp3")
         shutil.copy(ass, info_out / "subtitles.ass")
+        (info_out / "visuals.json").write_text(
+            json.dumps(
+                {
+                    "source": visuals_info.visual_source,
+                    "sources": visuals_info.sources,
+                    "queries": visuals_info.queries,
+                    "clips": visuals_info.clips,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         (info_out / "duration.json").write_text(
             json.dumps(
                 {
@@ -169,6 +186,7 @@ def main() -> None:
     group.add_argument("--text", help="Narration text")
     group.add_argument("--script", type=Path, help="Path to a text file with narration")
     group.add_argument("--batch", type=Path, help="Path to a file with one topic per line")
+    parser.add_argument("--topic", default="", help="Topic, used to steer stock searches")
     parser.add_argument("--out", type=Path, default=ROOT / "output" / "reel.mp4")
     parser.add_argument("--voice", default=tts.DEFAULT_VOICE)
     parser.add_argument("--rate", default=tts.DEFAULT_RATE)
@@ -224,6 +242,7 @@ def main() -> None:
         work_dir=work,
         clips=clips,
         logo_text=args.logo,
+        topic=args.topic or "",
     )
 
 

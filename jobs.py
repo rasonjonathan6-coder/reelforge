@@ -265,16 +265,27 @@ def produce(job_id: str, req: dict) -> None:
             work_dir=work / ".work",
             clips=clips,
             logo_text=req.get("logo") or None,
+            topic=req.get("topic", ""),
             on_step=on_step,
             info_out=work,
             speech=speech,
             target_duration=target,
         )
         # Intermediate artefacts required by the batch layout.
+        visuals_meta = {}
+        visuals_file = work / "visuals.json"
+        if visuals_file.exists():
+            try:
+                visuals_meta = json.loads(visuals_file.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001 - diagnostics only
+                visuals_meta = {}
         (work / "scenes.json").write_text(
             json.dumps({"use_stock": req.get("use_stock", True),
                         "query": req.get("query", ""),
-                        "clips": [c.name for c in (clips or [])]},
+                        "clips": [c.name for c in (clips or [])],
+                        "source": visuals_meta.get("source", "local_fallback"),
+                        "sources": visuals_meta.get("sources", []),
+                        "queries": visuals_meta.get("queries", [])},
                        ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -316,6 +327,9 @@ def produce(job_id: str, req: dict) -> None:
                 "target_duration": durations.get("target_duration"),
                 "audio_duration": durations.get("audio_duration"),
                 "final_video_duration": durations.get("final_video_duration"),
+                "visual_source": visuals_meta.get("source", "local_fallback"),
+                "visual_sources": visuals_meta.get("sources", []),
+                "visual_queries": visuals_meta.get("queries", []),
             },
         )
     except Exception as exc:  # noqa: BLE001 - surface any failure to the client

@@ -27,7 +27,7 @@ from config import (
     WORKER_COUNT,
 )
 from jobs import CLIP_SUFFIXES, OUTPUT_DIR, Job, load, produce, save
-from pipeline import script_writer, tts
+from pipeline import script_writer, tts, visuals
 
 app = FastAPI(title="ReelForge", version="2.2.0")
 
@@ -194,12 +194,15 @@ def voices() -> dict:
 
 @app.get("/api/config")
 def public_config() -> dict:
+    stock = [name for name in ("pexels", "pixabay") if visuals.provider_ready(name)]
     return {
         "queue": QUEUE_BACKEND,
         "storage": STORAGE_BACKEND,
         "llm": LLM_PROVIDER,
         "max_batch_size": MAX_BATCH_SIZE,
         "max_concurrent_jobs": MAX_CONCURRENT_JOBS,
+        "stock_providers": stock,
+        "stock_available": bool(stock),
     }
 
 

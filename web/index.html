@@ -171,6 +171,8 @@
       </div>
     </div>
 
+    <div class="hint" id="stock-hint"></div>
+
     <div class="row">
       <div>
         <label for="logo">Signature (optionnel)</label>
@@ -211,6 +213,10 @@
       <div class="block">
         <h4>Hashtags <span class="copy" data-copy="m-tags">copier</span></h4>
         <div class="tags" id="m-tags"></div>
+      </div>
+      <div class="block">
+        <h4>Source des images</h4>
+        <div id="m-source" style="display:none"></div>
       </div>
     </div>
   </section>
@@ -307,6 +313,7 @@
       </div>
     </div>
     <div class="hint">Les clips importés sont utilisés pour toutes les vidéos du lot, dans le même ordre.</div>
+    <div class="hint" id="b-stock-hint"></div>
 
     <button class="primary" id="go-batch">🚀 Générer le lot</button>
     <div class="free" id="batch-limit"></div>
@@ -350,6 +357,20 @@ async function loadConfig(){
   }catch(e){}
   $('batch-limit').textContent =
     `Limite : ${cfg.max_batch_size} vidéos par lot · ${cfg.max_concurrent_jobs} en parallèle maximum.`;
+  renderStockHint();
+}
+
+function renderStockHint(){
+  const providers = cfg.stock_providers || [];
+  const ok = cfg.stock_available;
+  const text = ok
+    ? `Vidéos stock disponibles via ${providers.map(p=>p[0].toUpperCase()+p.slice(1)).join(' + ')}. Chaque scène cherche son propre plan.`
+    : `Aucune clé Pexels/Pixabay configurée : le mode « Vidéos stock » utilisera les visuels animés générés. Ajoute PEXELS_API_KEY ou PIXABAY_API_KEY pour de vraies vidéos.`;
+  ['stock-hint','b-stock-hint'].forEach(id=>{
+    const el = $(id); if(!el) return;
+    el.textContent = text;
+    el.style.color = ok ? '' : 'var(--accent)';
+  });
 }
 loadConfig();
 
@@ -482,6 +503,9 @@ function renderBatch(batchId, b){
     if(j.status === 'completed'){
       sub = `${j.duration ? j.duration.toFixed(1)+' secondes' : 'terminée'}`;
       if(meta.size_kb) sub += ` · ${(meta.size_kb/1024).toFixed(1)} Mo`;
+      if(meta.visual_source === 'local_fallback') sub += ' · visuels animés';
+      else if(meta.visual_sources && meta.visual_sources.length) sub += ` · vidéos ${meta.visual_sources.join(' + ')}`;
+      else if(meta.visual_source === 'ai_clips') sub += ' · clips importés';
     } else if(j.status === 'running'){
       sub = `${STEP_FR[j.step] || j.step} — ${j.progress}%`;
     } else if(j.status === 'failed'){
@@ -639,6 +663,18 @@ function showMeta(meta){
   $('m-title').textContent = meta.title || '—';
   $('m-desc').textContent = meta.description || '—';
   $('m-tags').innerHTML = (meta.hashtags||[]).map(t=>`<span class="tag">#${t}</span>`).join('') || '—';
+  const vs = meta.visual_source;
+  if(vs){
+    const label = vs === 'local_fallback'
+      ? 'Visuels animés générés (aucune vidéo stock utilisée)'
+      : (meta.visual_sources && meta.visual_sources.length
+          ? `Vraies vidéos : ${meta.visual_sources.join(' + ')}`
+          : 'Clips importés utilisés');
+    $('m-source').textContent = label;
+    $('m-source').style.display = 'block';
+  } else {
+    $('m-source').style.display = 'none';
+  }
   $('meta').style.display = 'block';
 }
 

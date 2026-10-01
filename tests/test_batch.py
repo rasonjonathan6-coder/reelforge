@@ -68,6 +68,11 @@ def client(tmp_path, monkeypatch):
             Path(info_out).mkdir(parents=True, exist_ok=True)
             (Path(info_out) / "audio.mp3").write_bytes(b"audio")
             (Path(info_out) / "subtitles.ass").write_text("[Script Info]", encoding="utf-8")
+            (Path(info_out) / "visuals.json").write_text(
+                json.dumps({"source": "pexels", "sources": ["pexels"],
+                            "queries": ["city cinematic"], "clips": ["pexels_1.mp4"]}),
+                encoding="utf-8",
+            )
             (Path(info_out) / "duration.json").write_text(
                 json.dumps({"target_duration": 30, "audio_duration": 30.0,
                             "final_video_duration": 30.0}),
@@ -125,9 +130,16 @@ def test_batch_creates_independent_jobs(client):
         assert (folder / "subtitles.ass").exists()
         assert (folder / "scenes.json").exists()
 
-    # Per-video metadata carries title/description/hashtags.
+    # Per-video metadata carries title/description/hashtags and the visual source.
     meta = json.loads((dirs[body["jobs"][0]["job_id"]] / "metadata.json").read_text())
     assert {"title", "description", "hashtags"} <= set(meta)
+
+    scenes = json.loads((dirs[body["jobs"][0]["job_id"]] / "scenes.json").read_text())
+    assert scenes["source"] == "pexels"
+
+    job = client.get(f"/api/jobs/{body['jobs'][0]['job_id']}").json()
+    assert job["meta"]["visual_source"] == "pexels"
+    assert job["meta"]["visual_sources"] == ["pexels"]
 
 
 def test_batch_isolated_failure(client):
@@ -224,6 +236,8 @@ def test_single_job_contract_unchanged(client):
 
 def test_config_exposes_batch_limits(client):
     cfg = client.get("/api/config").json()
+    assert cfg["stock_available"] is False
+    assert cfg["stock_providers"] == []
     assert "max_batch_size" in cfg
     assert "max_concurrent_jobs" in cfg
 

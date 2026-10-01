@@ -15,7 +15,7 @@ vignette et métadonnées** (titre, description, hashtags).
 | Voix off IA (edge-tts, 400+ voix, 100+ langues) | ✅ gratuit, illimité |
 | Sous-titres animés synchronisés mot par mot | ✅ fade + mot actif en couleur |
 | Visuels qui bougent (scènes animées, transitions, grain) | ✅ |
-| Vidéos stock gratuites (Pexels **ou** Pixabay, clés gratuites) | ✅ |
+| Vidéos stock gratuites (Pexels **ou** Pixabay, clés gratuites) | ✅ une recherche par scène, la source utilisée est affichée |
 | Import de clips IA générés (Colab / Wan / LTX) | ✅ ils remplacent les visuels auto |
 | Habillage : barre de progression + signature | ✅ |
 | Vignette générée par IA + titre incrusté | ✅ |
@@ -111,7 +111,8 @@ Sans `S3_PUBLIC_BASE_URL`, l'API renvoie une URL présignée (7 jours).
 | `STORAGE_BACKEND` | `local` | `local` ou `s3` |
 | `S3_BUCKET`, `S3_PREFIX`, `S3_ENDPOINT_URL`, `S3_REGION` | — | stockage objet |
 | `S3_PUBLIC_BASE_URL` | — | base CDN pour liens directs |
-| `PEXELS_API_KEY` | — | active les vidéos stock |
+| `PEXELS_API_KEY` | — | active les vidéos stock Pexels (clé gratuite) |
+| `PIXABAY_API_KEY` | — | active les vidéos stock Pixabay (clé gratuite) |
 | `NVIDIA_API_KEY` | — | script IA via **NVIDIA NIM** (build.nvidia.com, clé gratuite) |
 | `NVIDIA_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | modèle NIM |
 | `GEMINI_API_KEY` | — | script IA via Google Gemini (offre gratuite) |
@@ -255,7 +256,7 @@ pipeline/script_writer.py → script + métadonnées (générateur local, LLM op
 pipeline/thumbnail.py → vignette (fond IA + titre Pillow)
 pipeline/tts.py       → edge-tts + timings mot par mot
 pipeline/subtitles.py → sous-titres ASS karaoké (fade + mot actif)
-pipeline/visuals.py   → scènes animées (xfade/grain) ou stock Pexels/Pixabay
+pipeline/visuals.py   → stock Pexels/Pixabay (une recherche par scène) ou scènes animées
 pipeline/overlay.py   → barre de progression + signature (drawtext)
 pipeline/compose.py   → montage final 9:16
 pipeline/storage.py   → stockage local ou S3
@@ -266,7 +267,8 @@ pipeline/storage.py   → stockage local ou S3
 - LLM indisponible ou limité → métadonnées générées localement (heuristique), la
   vidéo se fait quand même.
 - API image indisponible → fond de vignette en dégradé.
-- Pexels/Pixabay indisponible ou sans clé → scènes animées générées par FFmpeg.
+- Pexels/Pixabay indisponible ou sans clé → scènes animées générées par FFmpeg,
+  et la source réellement utilisée est indiquée dans l'UI et dans `meta.visual_source`.
 - FFmpeg sans `drawtext` → habillage ignoré, la vidéo se termine quand même.
 - Redis indisponible → repli automatique sur le pool local.
 
