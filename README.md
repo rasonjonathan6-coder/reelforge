@@ -144,11 +144,14 @@ GEMINI_API_KEY=xxx python app.py         # aistudio.google.com → clé gratuite
 |---|---|---|
 | POST | `/api/script` | Sujet → script |
 | POST | `/api/generate` | Crée un job, renvoie `job_id` |
+| POST | `/api/batch-generate` | Crée un lot de jobs (un par sujet) |
+| GET | `/api/batch/{id}` | Statut de chaque job du lot + compteurs |
+| GET | `/api/batch/{id}/download` | ZIP des vidéos terminées du lot |
 | GET | `/api/jobs/{id}` | Statut, progression, vidéo, vignette, métadonnées |
 | GET | `/api/voices` | Liste des voix |
 | POST | `/api/upload-clips` | Upload de clips IA → dossier réutilisable |
-| GET | `/api/config` | Backends actifs |
-| GET | `/videos/{id}.mp4` | Téléchargement |
+| GET | `/api/config` | Backends actifs + limites batch |
+| GET | `/videos/{...}.mp4` | Téléchargement |
 
 ```bash
 # Script depuis un sujet
@@ -164,7 +167,38 @@ curl -X POST localhost:8000/api/upload-clips -F "files=@clip1.mp4" -F "files=@cl
 # -> {"clips_dir":".../output/clips/xxxx","count":2}
 curl -X POST localhost:8000/api/generate -H 'Content-Type: application/json' \
   -d '{"text":"Ton script...","clips_dir":".../output/clips/xxxx","logo":"@ma.chaine"}'
+
+# Lot : un sujet par ligne = une vidéo indépendante
+curl -X POST localhost:8000/api/batch-generate -H 'Content-Type: application/json' \
+  -d '{"topics":["5 faits étonnants sur l espace","Les animaux les plus rapides"],
+       "language":"fr-FR","duration":30,"style":"storytelling","tone":"dynamic",
+       "voice":"fr-FR-VivienneMultilingualNeural","rate":"-5%"}'
+# -> {"batch_id":"...","jobs":[{"job_id":"...","topic":"..."}]}
+curl -s localhost:8000/api/batch/<batch_id>            # statut détaillé
+curl -sO localhost:8000/api/batch/<batch_id>/download  # ZIP des vidéos terminées
 ```
+
+## Génération en lot
+
+Chaque sujet devient un job indépendant, rangé dans son propre dossier :
+
+```
+output/
+  BATCH_ID/
+    JOB_ID_1/  script.json  audio.mp3  scenes.json  subtitles.ass  metadata.json  final.mp4
+    JOB_ID_2/  ...
+```
+
+- **Statuts réels** : `queued` → `running` → `completed` / `failed`.
+- **Étapes réelles** : `script`, `tts`, `subtitles`, `visuals`, `compose`, `metadata`,
+  `completed` (aucune progression simulée — chaque étape est émise par le pipeline).
+- **Échec isolé** : un job en échec ne bloque jamais les autres ; le lot reste
+  téléchargeable pour les vidéos réussies.
+- **Concurrence bornée** : `MAX_CONCURRENT_JOBS` (défaut 2) limite les rendus
+  simultanés pour ne pas saturer le CPU/RAM.
+- **Limite de taille** : `MAX_BATCH_SIZE` (défaut 20) — au-delà, l'API renvoie 400.
+- **ZIP** : `Télécharger tout` n'inclut que les MP4 terminés, nommés
+  `01_sujet.mp4`, `02_...` ; aucune clé API n'y figure.
 
 ## Déploiement
 
@@ -190,8 +224,9 @@ backend S3 (`STORAGE_BACKEND=s3`) — c'est exactement ce à quoi il sert.
 ## Architecture
 
 ```
-web/index.html        → interface (sujet/script, voix, aperçu, vignette, métadonnées)
+web/index.html        → interface (mode simple + mode lot, voix, aperçu, métadonnées)
 app.py                → API FastAPI (dispatch local ou Celery)
+batch.py              → lots : registre, concurrence bornée, statuts, ZIP
 celery_app.py         → application Celery
 tasks.py              → tâche Celery
 jobs.py               → modèle de job + routine de production partagée
@@ -222,4 +257,10 @@ pipeline/storage.py   → stockage local ou S3
 python generate.py --script examples/script.txt --out output/reel.mp4 --no-stock
 python generate.py --text "Ton script ici..." --out output/reel.mp4
 python generate.py --text "..." --out output/reel.mp4 --clips ~/clips_ia --logo "@ma.chaine"
+
+# Lot : un sujet par ligne dans topics.txt
+python generate.py --batch topics.txt \
+  --language fr-FR --duration 30 --style storytelling --tone dynamic \
+  --voice fr-FR-VivienneMultilingualNeural --rate "-5%" \
+  --output output/batches
 ```

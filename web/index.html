@@ -68,6 +68,31 @@
   input[type=file]{width:100%;font-size:12px;color:var(--muted)}
   .free b{color:var(--ok)}
   .hidden{display:none}
+  .modes{max-width:1180px;margin:0 auto;padding:6px 22px 0;display:flex;gap:8px}
+  .modes button{margin:0;border:1px solid var(--line);background:#0e0e17;color:var(--muted);
+    border-radius:11px;padding:10px 18px;font:inherit;font-weight:700;cursor:pointer}
+  .modes button.active{background:linear-gradient(135deg,var(--accent),#ff9a3d);color:#1a0f06;border-color:transparent}
+  .batch-topics{display:flex;flex-direction:column;gap:10px}
+  .topic-row{display:flex;gap:10px;align-items:center}
+  .topic-row input{flex:1}
+  .topic-row button{margin:0;border:1px solid var(--line);background:#0e0e17;color:var(--err);
+    border-radius:10px;width:42px;padding:11px 0;font:inherit;font-weight:700;cursor:pointer}
+  .topic-row button:hover{border-color:var(--err)}
+  .batch-list{display:flex;flex-direction:column;gap:12px;margin-top:6px}
+  .bjob{border:1px solid var(--line);border-radius:14px;padding:14px;background:#0e0e17}
+  .bjob .top{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+  .bjob .name{font-weight:700}
+  .bjob .sub{color:var(--muted);font-size:13px;margin-top:6px}
+  .bjob .err{color:var(--err);font-size:13px;margin-top:6px}
+  .bjob .acts{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+  .bjob .acts a,.bjob .acts button{margin:0;border:1px solid var(--line);border-radius:10px;padding:8px 12px;
+    background:#14141f;color:var(--txt);text-decoration:none;font:inherit;font-weight:600;font-size:13px;cursor:pointer}
+  .bjob .acts a:hover,.bjob .acts button:hover{border-color:var(--accent)}
+  .bjob details{margin-top:10px;font-size:13px;color:var(--muted)}
+  .bjob details summary{cursor:pointer;color:var(--accent)}
+  .bjob pre{white-space:pre-wrap;word-break:break-word;font-size:12.5px;color:var(--txt);
+    background:#0b0b12;border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0 0}
+  .zipbar{margin-top:16px;display:none}
 </style>
 </head>
 <body>
@@ -76,7 +101,12 @@
   <p class="sub">Génère de vraies vidéos verticales de 30 à 60 s — script IA, voix off, sous-titres animés, vignette et métadonnées — sans caméra, sans compte, <b style="color:var(--ok)">100 % gratuit et illimité</b>.</p>
 </header>
 
-<main>
+<div class="modes">
+  <button id="mode-single" class="active">Génération simple</button>
+  <button id="mode-batch">Génération en lot</button>
+</div>
+
+<main id="view-single">
   <section class="card">
     <div class="tabs">
       <button id="tab-topic" class="active">À partir d'un sujet</button>
@@ -186,17 +216,327 @@
   </section>
 </main>
 
+<main id="view-batch" class="hidden">
+  <section class="card">
+    <label>Sujets — une vidéo par ligne</label>
+    <div class="batch-topics" id="batch-topics"></div>
+    <button class="ghost" id="add-topic">+ Ajouter un sujet</button>
+
+    <div class="row">
+      <div>
+        <label for="b-language">Langue</label>
+        <select id="b-language">
+          <option value="français" selected>Français</option>
+          <option value="english">English</option>
+          <option value="español">Español</option>
+          <option value="deutsch">Deutsch</option>
+        </select>
+      </div>
+      <div>
+        <label for="b-duration">Durée</label>
+        <select id="b-duration">
+          <option value="30" selected>30 secondes</option>
+          <option value="45">45 secondes</option>
+          <option value="60">60 secondes</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="b-style">Style</label>
+        <select id="b-style">
+          <option value="storytelling" selected>Storytelling</option>
+          <option value="listicle">Top / liste</option>
+          <option value="educational">Éducatif</option>
+          <option value="motivational">Motivation</option>
+          <option value="documentary">Documentaire</option>
+        </select>
+      </div>
+      <div>
+        <label for="b-tone">Ton</label>
+        <select id="b-tone">
+          <option value="dynamic" selected>Dynamique</option>
+          <option value="calme">Calme</option>
+          <option value="inspirant">Inspirant</option>
+          <option value="humour">Humour</option>
+          <option value="sérieux">Sérieux</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="b-voice">Voix</label>
+        <select id="b-voice"></select>
+      </div>
+      <div>
+        <label for="b-rate">Débit</label>
+        <select id="b-rate">
+          <option value="-5%" selected>Naturel (-5 %)</option>
+          <option value="+0%">Normal</option>
+          <option value="+8%">Rapide (+8 %)</option>
+          <option value="+15%">Très rapide (+15 %)</option>
+          <option value="-12%">Posé (-12 %)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="b-stock">Source des visuels</label>
+        <select id="b-stock">
+          <option value="0" selected>Visuels générés</option>
+          <option value="1">Vidéos stock (Pexels/Pixabay)</option>
+        </select>
+      </div>
+      <div>
+        <label for="b-logo">Signature (optionnel)</label>
+        <input id="b-logo" placeholder="ex: @ma.chaine">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="b-query">Thème visuel</label>
+        <input id="b-query" value="city night vertical">
+      </div>
+      <div>
+        <label for="b-clips">Clips IA générés (Colab) — optionnel</label>
+        <input id="b-clips" type="file" accept="video/*" multiple>
+      </div>
+    </div>
+    <div class="hint">Les clips importés sont utilisés pour toutes les vidéos du lot, dans le même ordre.</div>
+
+    <button class="primary" id="go-batch">🚀 Générer le lot</button>
+    <div class="free" id="batch-limit"></div>
+  </section>
+
+  <section class="card preview">
+    <label>Lot <span id="batch-id" style="color:var(--accent);text-transform:none;letter-spacing:0"></span></label>
+    <div class="bar"><i id="bbar"></i></div>
+    <div class="status"><span id="bstep">Prêt</span><span class="pill" id="bpill" style="display:none"></span></div>
+    <div class="batch-list" id="batch-list">
+      <div class="ph" style="color:var(--muted);font-size:14px">Les vidéos du lot apparaîtront ici, chacune avec son statut et son téléchargement.</div>
+    </div>
+    <div class="zipbar" id="zipbar">
+      <a class="dl" id="dl-zip" style="display:block" download>⬇ Télécharger tout (ZIP)</a>
+    </div>
+  </section>
+</main>
+
 <script>
 const $ = id => document.getElementById(id);
 let timer = null;
+let btimer = null;
+let cfg = {max_batch_size: 20, max_concurrent_jobs: 2};
 
 async function loadVoices(){
   try{
     const r = await fetch('/api/voices'); const d = await r.json();
-    $('voice').innerHTML = d.voices.map(v=>`<option value="${v.id}">${v.label}</option>`).join('');
-  }catch(e){ $('voice').innerHTML = '<option value="fr-FR-VivienneMultilingualNeural">Vivienne (femme, FR)</option>'; }
+    const opts = d.voices.map(v=>`<option value="${v.id}">${v.label}</option>`).join('');
+    $('voice').innerHTML = opts;
+    $('b-voice').innerHTML = opts;
+  }catch(e){
+    const fb = '<option value="fr-FR-VivienneMultilingualNeural">Vivienne (femme, FR)</option>';
+    $('voice').innerHTML = fb; $('b-voice').innerHTML = fb;
+  }
 }
 loadVoices();
+
+async function loadConfig(){
+  try{
+    const r = await fetch('/api/config'); cfg = await r.json();
+  }catch(e){}
+  $('batch-limit').textContent =
+    `Limite : ${cfg.max_batch_size} vidéos par lot · ${cfg.max_concurrent_jobs} en parallèle maximum.`;
+}
+loadConfig();
+
+// --- mode switch (simple / lot) ---
+function showMode(which){
+  const single = which === 'single';
+  $('mode-single').classList.toggle('active', single);
+  $('mode-batch').classList.toggle('active', !single);
+  $('view-single').classList.toggle('hidden', !single);
+  $('view-batch').classList.toggle('hidden', single);
+}
+$('mode-single').addEventListener('click', ()=>showMode('single'));
+$('mode-batch').addEventListener('click', ()=>showMode('batch'));
+
+// --- batch topic rows ---
+function addTopicRow(value){
+  const row = document.createElement('div');
+  row.className = 'topic-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'ex: 5 faits étonnants sur l\'espace';
+  input.value = value || '';
+  const rm = document.createElement('button');
+  rm.type = 'button'; rm.textContent = '×'; rm.title = 'Supprimer';
+  rm.addEventListener('click', ()=>row.remove());
+  row.appendChild(input); row.appendChild(rm);
+  $('batch-topics').appendChild(row);
+  return input;
+}
+$('add-topic').addEventListener('click', ()=>{ const i = addTopicRow(''); i.focus(); });
+
+const DEFAULT_TOPICS = [
+  '5 faits étonnants sur l\'espace',
+  '5 inventions qui ont changé le monde',
+  'Les animaux les plus rapides du monde'
+];
+DEFAULT_TOPICS.forEach(t=>addTopicRow(t));
+
+function batchTopics(){
+  return Array.from(document.querySelectorAll('#batch-topics input'))
+    .map(i=>i.value.trim()).filter(Boolean);
+}
+
+function bPill(kind, text){
+  const p = $('bpill'); p.style.display='inline-block'; p.className='pill '+kind; p.textContent=text;
+}
+function setBatchStep(text){ $('bstep').textContent = text; }
+
+async function launchBatch(){
+  const topics = batchTopics();
+  if(!topics.length){ alert('Ajoute au moins un sujet.'); return; }
+  if(topics.length > cfg.max_batch_size){ alert(`Maximum de ${cfg.max_batch_size} vidéos par lot.`); return; }
+
+  const btn = $('go-batch'); btn.disabled = true;
+  $('batch-list').innerHTML = '';
+  $('zipbar').style.display = 'none';
+  $('bbar').style.width = '2%'; setBatchStep('Envoi…'); bPill('run','En cours');
+
+  const body = {
+    topics: topics,
+    language: $('b-language').value,
+    duration: parseInt($('b-duration').value),
+    style: $('b-style').value,
+    tone: $('b-tone').value,
+    voice: $('b-voice').value,
+    rate: $('b-rate').value,
+    query: $('b-query').value || 'city night vertical',
+    use_stock: $('b-stock').value === '1',
+    logo: ($('b-logo').value || '').trim()
+  };
+
+  const clipFiles = $('b-clips').files;
+  if(clipFiles && clipFiles.length){
+    setBatchStep('Envoi des clips…');
+    try{
+      const fd = new FormData();
+      for(const f of clipFiles) fd.append('files', f);
+      const up = await fetch('/api/upload-clips',{method:'POST',body:fd});
+      if(!up.ok) throw new Error((await up.json()).detail || 'Upload impossible');
+      body.clips_dir = (await up.json()).clips_dir;
+    }catch(e){ btn.disabled=false; bPill('err','Échec'); setBatchStep(e.message); return; }
+  }
+
+  let batchId;
+  try{
+    const r = await fetch('/api/batch-generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!r.ok) throw new Error((await r.json()).detail || ('Erreur '+r.status));
+    batchId = (await r.json()).batch_id;
+  }catch(e){ btn.disabled=false; bPill('err','Échec'); setBatchStep(e.message); return; }
+
+  $('batch-id').textContent = '#' + batchId;
+  setBatchStep('Génération en cours…');
+
+  clearInterval(btimer);
+  btimer = setInterval(async ()=>{
+    try{
+      const r = await fetch('/api/batch/'+batchId); const b = await r.json();
+      renderBatch(batchId, b);
+      const done = b.counts.completed + b.counts.failed;
+      $('bbar').style.width = Math.max(3, Math.round(done / b.total * 100)) + '%';
+      if(b.status === 'completed' || b.status === 'completed_with_errors'){
+        clearInterval(btimer); btn.disabled = false; $('bbar').style.width = '100%';
+        bPill(b.counts.failed ? 'err' : 'done',
+              b.counts.failed ? `${b.counts.completed}/${b.total} réussies` : 'Lot terminé');
+        setBatchStep(b.counts.failed ? `${b.counts.failed} vidéo(s) en échec` : 'Toutes les vidéos sont prêtes');
+      } else {
+        setBatchStep(`${b.counts.completed} terminée(s) · ${b.counts.running} en cours · ${b.counts.queued} en attente`);
+      }
+    }catch(e){ clearInterval(btimer); btn.disabled = false; bPill('err','Échec'); setBatchStep(e.message); }
+  }, 2000);
+}
+$('go-batch').addEventListener('click', launchBatch);
+
+const STEP_FR = {
+  queued:'En attente', running:'En cours', script:'Génération du script', tts:'Génération de la voix',
+  visuals:'Préparation des visuels', subtitles:'Sous-titres', compose:'Montage final',
+  metadata:'Métadonnées', completed:'Terminé', failed:'Échec'
+};
+
+function renderBatch(batchId, b){
+  const list = $('batch-list');
+  list.innerHTML = '';
+  b.jobs.forEach(j=>{
+    const el = document.createElement('div');
+    el.className = 'bjob';
+    const icon = j.status === 'completed' ? '✓' : j.status === 'failed' ? '✗'
+               : j.status === 'running' ? '⟳' : '○';
+    const meta = j.meta || {};
+    let sub = '';
+    if(j.status === 'completed'){
+      sub = `${j.duration ? j.duration.toFixed(1)+' secondes' : 'terminée'}`;
+      if(meta.size_kb) sub += ` · ${(meta.size_kb/1024).toFixed(1)} Mo`;
+    } else if(j.status === 'running'){
+      sub = `${STEP_FR[j.step] || j.step} — ${j.progress}%`;
+    } else if(j.status === 'failed'){
+      sub = `Erreur : ${j.error || 'inconnue'}`;
+    } else {
+      sub = 'En attente';
+    }
+
+    el.innerHTML = `
+      <div class="top">
+        <span class="name">${icon} ${escapeHtml(j.topic)}</span>
+        <span class="pill ${j.status === 'completed' ? 'done' : j.status === 'failed' ? 'err' : 'run'}">${STEP_FR[j.status] || j.status}</span>
+      </div>
+      <div class="${j.status === 'failed' ? 'err' : 'sub'}">${escapeHtml(sub)}</div>`;
+
+    if(j.status === 'completed'){
+      const acts = document.createElement('div');
+      acts.className = 'acts';
+      const dl = document.createElement('a');
+      dl.href = j.video_url; dl.setAttribute('download',''); dl.textContent = '⬇ Télécharger la vidéo';
+      acts.appendChild(dl);
+      el.appendChild(acts);
+
+      const det = document.createElement('details');
+      det.innerHTML = `
+        <summary>Titre, description, hashtags</summary>
+        <div style="margin-top:8px"><b>Titre</b> <button class="cp" data-v="${escapeAttr(meta.title||'')}">copier</button><div>${escapeHtml(meta.title||'—')}</div></div>
+        <div style="margin-top:8px"><b>Description</b> <button class="cp" data-v="${escapeAttr(meta.description||'')}">copier</button><div>${escapeHtml(meta.description||'—')}</div></div>
+        <div style="margin-top:8px"><b>Hashtags</b> <button class="cp" data-v="${escapeAttr((meta.hashtags||[]).map(h=>'#'+h).join(' '))}">copier</button><div>${(meta.hashtags||[]).map(h=>'#'+escapeHtml(h)).join(' ')||'—'}</div></div>`;
+      el.appendChild(det);
+    }
+    list.appendChild(el);
+  });
+
+  list.querySelectorAll('.cp').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      navigator.clipboard.writeText(btn.getAttribute('data-v') || '');
+      const old = btn.textContent; btn.textContent = 'copié !';
+      setTimeout(()=>btn.textContent = old, 1200);
+    });
+  });
+
+  const zip = $('zipbar');
+  if(b.zip_available){
+    zip.style.display = 'block';
+    const z = $('dl-zip');
+    z.href = `/api/batch/${batchId}/download`;
+    z.setAttribute('download', `ReelForge_Batch_${batchId}.zip`);
+  } else {
+    zip.style.display = 'none';
+  }
+}
+
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(s){ return escapeHtml(s); }
 
 // --- tabs ---
 function showTab(which){
@@ -277,7 +617,7 @@ async function generate(){
       const r = await fetch('/api/jobs/'+jobId); const j = await r.json();
       $('bar').style.width = Math.max(2, j.progress)+'%';
       $('step').textContent = j.step || '…';
-      if(j.status === 'done'){
+      if(j.status === 'completed' || j.status === 'done' || j.done){
         clearInterval(timer); $('go').disabled=false; $('bar').style.width='100%';
         $('step').textContent='Terminé'; setPill('done','Prêt');
         $('ph').style.display='none';
@@ -288,7 +628,7 @@ async function generate(){
           const dt = $('dl-thumb'); dt.style.display='block'; dt.href = j.thumbnail_url; dt.setAttribute('download','thumbnail.jpg');
         }
         showMeta(j.meta || {});
-      } else if(j.status === 'error'){
+      } else if(j.status === 'failed' || j.status === 'error'){
         clearInterval(timer); fail(j.error || 'Erreur inconnue');
       }
     }catch(e){ clearInterval(timer); fail(e.message); }

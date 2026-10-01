@@ -10,7 +10,9 @@ Runs entirely on CPU with no API key required.
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -18,6 +20,9 @@ from pipeline import compose, overlay, subtitles, tts, visuals
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_FFMPEG = ROOT / ".." / "bin" / "ffmpeg"
+
+# Real pipeline stages, in order. Both the single and batch modes report these.
+STEPS = ("script", "tts", "visuals", "subtitles", "compose", "metadata")
 
 
 def _ensure_ffmpeg() -> None:
@@ -43,25 +48,42 @@ def generate(
     work_dir: Path | None = None,
     clips: list[Path] | None = None,
     logo_text: str | None = None,
+    on_step=None,
+    info_out: Path | None = None,
 ) -> Path:
+    """Render one reel.
+
+    `on_step(stage, progress)` is called at each real stage so callers (the job
+    runner, the batch runner) can report genuine progress instead of guessing.
+    `info_out`, when given, receives the intermediate artifacts (voice-over,
+    subtitles, background) so a caller can archive them per job.
+    """
     _ensure_ffmpeg()
     tmp = Path(work_dir) if work_dir else Path(tempfile.mkdtemp(prefix="reel_"))
     tmp.mkdir(parents=True, exist_ok=True)
 
+    def report(stage: str, progress: int) -> None:
+        if on_step:
+            on_step(stage, progress)
+
+    report("tts", 35)
     print("[1/5] Synthesizing voice-over...")
     speech = tts.synthesize(text, tmp / "voice.mp3", voice=voice, rate=rate)
     duration = max(speech.duration, 1.0)
     print(f"      -> {duration:.1f}s of speech, {len(speech.words)} words")
 
+    report("subtitles", 50)
     print("[2/5] Building karaoke subtitles...")
     ass = subtitles.build_ass(speech.words, tmp / "captions.ass")
 
+    report("visuals", 60)
     print("[3/5] Preparing visuals...")
     background = visuals.build_background(
         duration, tmp, query=query, use_stock=use_stock, clips=clips
     )
     print(f"      -> {background.name}")
 
+    report("compose", 75)
     print("[4/5] Composing final video...")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     compose.compose(background, speech.audio_path, ass, out_path, duration)
@@ -75,20 +97,51 @@ def generate(
         except Exception as exc:  # noqa: BLE001 - overlay is cosmetic, never fatal
             print(f"      -> overlay skipped ({exc})")
 
+    if info_out:
+        info_out.mkdir(parents=True, exist_ok=True)
+        shutil.copy(speech.audio_path, info_out / "audio.mp3")
+        shutil.copy(ass, info_out / "subtitles.ass")
+
     print(f"Done: {out_path}")
     return out_path
 
 
+def _batch_main(args) -> None:
+    from batch import run_batch_sync
+
+    topics = [
+        line.strip()
+        for line in args.batch.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if not topics:
+        raise SystemExit(f"Aucun sujet dans {args.batch}")
+
+    common = {
+        "duration": args.duration,
+        "language": args.language,
+        "style": args.style,
+        "tone": args.tone,
+        "voice": args.voice,
+        "rate": args.rate,
+        "query": args.query,
+        "use_stock": not args.no_stock,
+        "logo": args.logo or "",
+    }
+    run_batch_sync(topics, common, out_dir=args.output)
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate a faceless vertical reel")
+    parser = argparse.ArgumentParser(description="Generate faceless vertical reels")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--text", help="Narration text")
     group.add_argument("--script", type=Path, help="Path to a text file with narration")
+    group.add_argument("--batch", type=Path, help="Path to a file with one topic per line")
     parser.add_argument("--out", type=Path, default=ROOT / "output" / "reel.mp4")
     parser.add_argument("--voice", default=tts.DEFAULT_VOICE)
     parser.add_argument("--rate", default=tts.DEFAULT_RATE)
     parser.add_argument("--query", default="city night vertical", help="Stock search terms")
-    parser.add_argument("--no-stock", action="store_true", help="Skip Pexels, use generated visuals")
+    parser.add_argument("--no-stock", action="store_true", help="Skip stock, use generated visuals")
     parser.add_argument(
         "--clips",
         type=Path,
@@ -96,7 +149,27 @@ def main() -> None:
     )
     parser.add_argument("--logo", help="Brand text shown at the top of the video")
     parser.add_argument("--keep-work", action="store_true")
-    args = parser.parse_args()
+    # Batch-only options.
+    parser.add_argument("--language", default="français", help="Script language (batch)")
+    parser.add_argument("--duration", type=int, default=30, help="Target seconds (batch)")
+    parser.add_argument("--style", default="storytelling", help="Script style (batch)")
+    parser.add_argument("--tone", default="dynamic", help="Script tone (batch)")
+    parser.add_argument(
+        "--output", type=Path, default=ROOT / "output" / "batches", help="Batch output folder"
+    )
+    # argparse reads a leading-dash value like "-5%" as an option; join it back.
+    argv = sys.argv[1:]
+    for flag in ("--rate",):
+        if flag in argv:
+            i = argv.index(flag)
+            if i + 1 < len(argv) and re.match(r"^-\d", argv[i + 1]):
+                argv[i] = f"{flag}={argv[i + 1]}"
+                del argv[i + 1]
+    args = parser.parse_args(argv)
+
+    if args.batch:
+        _batch_main(args)
+        return
 
     text = args.text if args.text else args.script.read_text(encoding="utf-8").strip()
     clips = None

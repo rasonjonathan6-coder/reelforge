@@ -27,6 +27,11 @@ QUEUE_BACKEND = os.environ.get("QUEUE_BACKEND", "local")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 WORKER_COUNT = int(os.environ.get("WORKER_COUNT", "2"))
 
+# Batch generation: hard cap on topics per request, and how many videos may be
+# produced at the same time (keeps CPU/RAM in check on small hosts).
+MAX_BATCH_SIZE = int(os.environ.get("MAX_BATCH_SIZE", "20"))
+MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "2"))
+
 # Storage: "local" disk or "s3" (any S3-compatible endpoint: AWS, R2, MinIO...).
 STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND", "local")
 S3_BUCKET = os.environ.get("S3_BUCKET", "")

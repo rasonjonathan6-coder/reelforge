@@ -203,12 +203,23 @@ def _clean(text: str) -> str:
     return text.strip().strip('"')
 
 
-def write_script(topic: str, duration: int = 45, language: str = "français") -> str:
+def write_script(
+    topic: str,
+    duration: int = 45,
+    language: str = "français",
+    style: str = "",
+    tone: str = "",
+) -> str:
     """Generate a narration script sized for the target duration."""
     words = int(duration * 2.6)  # ~150 words/min spoken pace
     if _llm_available():
+        extra = ""
+        if style:
+            extra += f"Style : {style}\n"
+        if tone:
+            extra += f"Ton : {tone}\n"
         prompt = (
-            f"Sujet : {topic}\nLangue : {language}\n"
+            f"Sujet : {topic}\nLangue : {language}\n{extra}"
             f"Écris la narration d'une vidéo de {duration} secondes, environ {words} mots. "
             "Pas de titres, pas de didascalies : uniquement le texte à lire à voix haute, "
             "en un seul paragraphe."
