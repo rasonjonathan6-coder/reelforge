@@ -120,6 +120,8 @@ def generate(
                     "sources": visuals_info.sources,
                     "queries": visuals_info.queries,
                     "clips": visuals_info.clips,
+                    "scene_origins": visuals_info.scene_origins,
+                    "cache": visuals_info.cache_stats,
                 },
                 ensure_ascii=False,
                 indent=2,

@@ -4,5 +4,6 @@
 __pycache__/
 *.pyc
 output/
+data/cache/
 *.log
 .agent_tmp/

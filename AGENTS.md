@@ -22,7 +22,7 @@ design; they assert real durations with ffprobe rather than mocking ffmpeg.
 - `jobs.py` — job model, persistence, `produce()` (shared by single and batch).
 - `batch.py` — batch registry, bounded dispatch, ZIP.
 - `generate.py` — orchestrator + CLI.
-- `pipeline/` — `script_writer`, `tts`, `subtitles`, `visuals`, `compose`, `overlay`, `thumbnail`, `storage`.
+- `pipeline/` — `script_writer`, `tts`, `subtitles`, `visuals`, `stock_cache`, `compose`, `overlay`, `thumbnail`, `storage`.
 - `web/index.html` — single-file UI (no build step).
 
 ## Conventions
@@ -41,6 +41,22 @@ Stock search is per scene (`visuals.scene_queries`), one query per narration
 chunk, portrait renditions preferred, joined with `xfade` cross-dissolves.
 `PEXELS_API_BASE` / `PIXABAY_API_BASE` override the provider host (used to test
 against a local fake server without real keys).
+
+## Stock clip cache (`pipeline/stock_cache.py`)
+Downloaded clips are kept in a persistent local cache (`data/cache/pexels/`,
+git-ignored) so repeated topics do not re-hit the provider or re-download the
+same file. One entry = a SHA-256 key over `(provider, query, orientation)` +
+an mp4 + a JSON sidecar (provider url/id, width/height/duration, timestamps).
+- Entries are ffprobe-validated before publishing; writes are atomic
+  (tmp file + `os.replace`), so an interrupted download is never a valid entry.
+- A per-key lock means concurrent jobs download a key exactly once.
+- `PEXELS_CACHE_ENABLED` / `PEXELS_CACHE_TTL_DAYS` / `PEXELS_CACHE_MAX_GB` /
+  `PEXELS_CACHE_DIR` tune it. `cleanup()` (TTL + LRU size cap) runs at API
+  startup; it never deletes an entry a running job holds.
+- Per-scene provenance is reported in `meta.visual_scene_origins`
+  (`pexels_cache` / `pexels_api` / `reused`) and `meta.visual_cache` counters.
+- Tests isolate the cache via `tests/conftest.py`; never let a test touch the
+  real `data/cache/`.
 
 ## Gotchas
 - Do NOT pass a per-scene frame count to `zoompan`'s `d`; it freezes the frame

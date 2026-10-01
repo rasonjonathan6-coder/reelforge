@@ -40,6 +40,17 @@ S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL")  # e.g. https://<account>.r2
 S3_REGION = os.environ.get("S3_REGION", "auto")
 S3_PUBLIC_BASE_URL = os.environ.get("S3_PUBLIC_BASE_URL", "")  # CDN/base URL for direct links
 
+# Stock-footage cache: reuse already-downloaded, validated Pexels/Pixabay clips
+# so repeated topics do not re-hit the providers or re-download the same file.
+PEXELS_CACHE_ENABLED = os.environ.get("PEXELS_CACHE_ENABLED", "true").strip().lower() not in (
+    "0", "false", "no", "off",
+)
+PEXELS_CACHE_TTL_DAYS = int(os.environ.get("PEXELS_CACHE_TTL_DAYS", "30"))
+PEXELS_CACHE_MAX_GB = float(os.environ.get("PEXELS_CACHE_MAX_GB", "5"))
+PEXELS_CACHE_DIR = Path(
+    os.environ.get("PEXELS_CACHE_DIR") or (ROOT / "data" / "cache" / "pexels")
+)
+
 # LLM used for script + metadata. Without a key, a local generator is used.
 NVIDIA_BASE_URL = os.environ.get("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
 NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "nvidia/nemotron-3-super-120b-a12b")

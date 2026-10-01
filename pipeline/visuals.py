@@ -23,8 +23,16 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from config import PEXELS_CACHE_TTL_DAYS
+from pipeline import stock_cache
+
 WIDTH, HEIGHT = 1080, 1920
 FPS = 30
+
+# The pipeline always prefers a portrait rendition, so that is the orientation
+# a request is keyed on. The rendition actually picked may still be landscape
+# when no portrait exists; its real width/height are recorded in the cache meta.
+REQUEST_ORIENTATION = "portrait"
 
 TRANSITION = 0.6  # cross-dissolve duration, seconds
 SCENE_SECONDS = 4.0  # target on-screen time per generated scene
@@ -78,6 +86,8 @@ class Background:
     sources: list[str] = field(default_factory=list)
     queries: list[str] = field(default_factory=list)
     clips: list[str] = field(default_factory=list)
+    scene_origins: list[str] = field(default_factory=list)
+    cache_stats: dict = field(default_factory=dict)
 
     @property
     def visual_source(self) -> str:
@@ -352,7 +362,7 @@ def _probe_video(path: Path) -> dict | None:
     try:
         proc = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=width,height:format=duration",
+             "-show_entries", "stream=width,height,codec_name:format=duration",
              "-of", "json", str(path)],
             capture_output=True, text=True, timeout=60,
         )
@@ -370,7 +380,12 @@ def _probe_video(path: Path) -> dict | None:
         duration = 0.0
     if width <= 0 or height <= 0:
         return None
-    return {"width": width, "height": height, "duration": duration}
+    return {
+        "width": width,
+        "height": height,
+        "duration": duration,
+        "video_codec": streams[0].get("codec_name"),
+    }
 
 
 def _valid_video(path: Path) -> bool:
@@ -378,22 +393,34 @@ def _valid_video(path: Path) -> bool:
     return bool(info and info["duration"] >= MIN_CLIP_SECONDS)
 
 
-def _download(candidates: list[dict], work_dir: Path, tag: str) -> list[Path]:
+def _fetch_one(candidate: dict, dest: Path) -> bool:
+    """Download one candidate to `dest`. Returns True on success.
+
+    `dest` is normally a cache temp file, so a failure never leaves a partial
+    file where a valid cache entry is expected.
+    """
     import requests
 
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with requests.get(candidate["url"], stream=True, timeout=90) as resp:
+            resp.raise_for_status()
+            with open(dest, "wb") as handle:
+                for chunk in resp.iter_content(chunk_size=1 << 16):
+                    handle.write(chunk)
+    except Exception as exc:  # noqa: BLE001 - skip this clip, try the next
+        print(f"[visuals] téléchargement échoué ({exc})")
+        dest.unlink(missing_ok=True)
+        return False
+    return True
+
+
+def _download(candidates: list[dict], work_dir: Path, tag: str) -> list[Path]:
     work_dir.mkdir(parents=True, exist_ok=True)
     clips: list[Path] = []
     for candidate in candidates:
         dest = work_dir / f"{tag}_{candidate['id']}.mp4"
-        try:
-            with requests.get(candidate["url"], stream=True, timeout=90) as resp:
-                resp.raise_for_status()
-                with open(dest, "wb") as handle:
-                    for chunk in resp.iter_content(chunk_size=1 << 16):
-                        handle.write(chunk)
-        except Exception as exc:  # noqa: BLE001 - skip this clip, try the next
-            print(f"[visuals] téléchargement {tag} échoué ({exc})")
-            dest.unlink(missing_ok=True)
+        if not _fetch_one(candidate, dest):
             continue
         if _valid_video(dest):
             clips.append(dest)
@@ -403,35 +430,99 @@ def _download(candidates: list[dict], work_dir: Path, tag: str) -> list[Path]:
     return clips
 
 
-def _collect_stock(queries: list[str], work_dir: Path) -> tuple[list[Path], list[str]]:
-    """One real clip per scene when possible: Pexels first, then Pixabay."""
+def _validate_clip(path: Path) -> dict | None:
+    """ffprobe a clip and return its metadata only if it is usable."""
+    info = _probe_video(path)
+    if not info or info["duration"] < MIN_CLIP_SECONDS:
+        return None
+    return info
+
+
+def _scene_clip(name: str, query: str, work_dir: Path, seen: set[str], stats) -> tuple[Path | None, str]:
+    """Get one usable clip for a scene, via the cache when enabled.
+
+    Returns `(path, origin)` where origin is `pexels_cache` (served from the
+    persistent cache) or `pexels_api` (freshly searched and downloaded). The
+    provider name is used verbatim, so Pixabay reports `pixabay_*`.
+    """
+    key = stock_cache.cache_key(name, query, REQUEST_ORIENTATION)
+
+    def fetch():
+        candidates = _candidates(name, query)
+        picked = _select(candidates, 1, set(seen))
+        if not picked:
+            return None, None
+        candidate = picked[0]
+        tmp = stock_cache.temp_path(key)
+        if not _fetch_one(candidate, tmp):
+            return None, None
+        return tmp, {
+            "source_url": candidate.get("url"),
+            "provider_id": candidate.get("id"),
+        }
+
+    path, status, meta = stock_cache.get(
+        name, query, REQUEST_ORIENTATION, fetch, _validate_clip,
+        ttl_days=PEXELS_CACHE_TTL_DAYS, stats=stats,
+    )
+
+    if path is not None:
+        if meta and meta.get("provider_id"):
+            seen.add(str(meta["provider_id"]))
+        return path, f"{name}_cache" if status == stock_cache.HIT else f"{name}_api"
+
+    if status == stock_cache.DISABLED:
+        # Cache off: keep the original, uncached behaviour.
+        candidates = _candidates(name, query)
+        files = _download(_select(candidates, 1, seen), work_dir, name)
+        return (files[0], f"{name}_api") if files else (None, "")
+
+    return None, ""
+
+
+def _collect_stock(queries: list[str], work_dir: Path) -> tuple[list[Path], list[str], stock_cache.CacheStats, list[str]]:
+    """One real clip per scene when possible: Pexels first, then Pixabay.
+
+    Each scene first asks the persistent cache; only a cache miss triggers a
+    provider search and download. The returned `scene_origins` mirrors
+    `queries` so a caller can tell which scenes came from the cache.
+    """
     clips: list[Path] = []
     sources: list[str] = []
+    origins: list[str] = []
+    found: list[Path | None] = []
     seen: set[str] = set()
+    stats = stock_cache.CacheStats()
 
     for query in queries:
+        clip: Path | None = None
+        origin = ""
         for name in ("pexels", "pixabay"):
             if not provider_ready(name):
                 continue
             try:
-                candidates = _candidates(name, query)
+                clip, origin = _scene_clip(name, query, work_dir, seen, stats)
             except Exception as exc:  # noqa: BLE001 - fall through to the next provider
                 print(f"[visuals] {name} indisponible ({exc}); fournisseur suivant")
                 continue
-            files = _download(_select(candidates, 1, seen), work_dir, name)
-            if files:
-                clips.extend(files)
+            if clip is not None:
                 if name not in sources:
                     sources.append(name)
                 break
+        found.append(clip)
+        origins.append(origin)
 
     # Scenes with no footage reuse an already-downloaded clip rather than
     # dropping to a gradient, so the reel stays real video end to end.
-    base = list(clips)
+    base = [clip for clip in found if clip is not None]
     if base:
-        while len(clips) < len(queries):
-            clips.append(base[len(clips) % len(base)])
-    return clips, sources
+        for index, clip in enumerate(found):
+            if clip is not None:
+                clips.append(clip)
+            else:
+                clips.append(base[index % len(base)])
+                origins[index] = "reused"
+    return clips, sources, stats, origins
 
 
 # ---------------------------------------------------------------------------
@@ -498,10 +589,13 @@ def build_background_info(
     queries: list[str] = []
     if use_stock:
         queries = scene_queries(topic or query, script, _scene_count(duration))
-        stock, sources = _collect_stock(queries, work_dir)
+        stock, sources, stats, origins = _collect_stock(queries, work_dir)
         if stock:
             _montage(stock, duration, work_dir, out_path)
-            return Background(out_path, sources, queries, [c.name for c in stock])
+            return Background(
+                out_path, sources, queries, [c.name for c in stock],
+                scene_origins=origins, cache_stats=stats.as_dict(),
+            )
         print("[visuals] aucune vidéo stock exploitable — fallback local utilisé")
 
     generate_scenes(duration, out_path)

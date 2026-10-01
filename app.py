@@ -9,6 +9,7 @@ from __future__ import annotations
 import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -21,15 +22,30 @@ from config import (
     LLM_PROVIDER,
     MAX_BATCH_SIZE,
     MAX_CONCURRENT_JOBS,
+    PEXELS_CACHE_TTL_DAYS,
     QUEUE_BACKEND,
     ROOT,
     STORAGE_BACKEND,
     WORKER_COUNT,
 )
 from jobs import CLIP_SUFFIXES, OUTPUT_DIR, Job, load, produce, save
-from pipeline import script_writer, tts, visuals
+from pipeline import script_writer, stock_cache, tts, visuals
 
-app = FastAPI(title="ReelForge", version="2.2.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Keep the clip cache tidy at boot: drop expired/invalid entries and cap the
+    # total size. Never blocks startup on a cache problem.
+    try:
+        removed = stock_cache.cleanup()
+        if any(removed.values()):
+            print(f"[PexelsCache] nettoyage au démarrage : {removed}")
+    except Exception as exc:  # noqa: BLE001 - maintenance is best-effort
+        print(f"[PexelsCache] nettoyage ignoré ({exc})")
+    yield
+
+
+app = FastAPI(title="ReelForge", version="2.2.0", lifespan=lifespan)
 
 executor = ThreadPoolExecutor(max_workers=WORKER_COUNT)
 
@@ -198,6 +214,7 @@ def voices() -> dict:
 @app.get("/api/config")
 def public_config() -> dict:
     stock = [name for name in ("pexels", "pixabay") if visuals.provider_ready(name)]
+    cache = stock_cache.stats_snapshot()
     return {
         "queue": QUEUE_BACKEND,
         "storage": STORAGE_BACKEND,
@@ -206,6 +223,12 @@ def public_config() -> dict:
         "max_concurrent_jobs": MAX_CONCURRENT_JOBS,
         "stock_providers": stock,
         "stock_available": bool(stock),
+        "stock_cache": {
+            "enabled": cache["enabled"],
+            "entries": cache["entries"],
+            "size_mb": round(cache["bytes"] / 1024 / 1024, 2),
+            "ttl_days": PEXELS_CACHE_TTL_DAYS,
+        },
     }
 
 

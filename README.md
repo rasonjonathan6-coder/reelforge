@@ -16,6 +16,7 @@ vignette et métadonnées** (titre, description, hashtags).
 | Sous-titres animés synchronisés mot par mot | ✅ fade + mot actif en couleur |
 | Visuels qui bougent (scènes animées, transitions, grain) | ✅ |
 | Vidéos stock gratuites (Pexels **ou** Pixabay, clés gratuites) | ✅ une recherche par scène, la source utilisée est affichée |
+| Cache local des clips stock (réutilise les plans déjà téléchargés) | ✅ moins d'appels API et de téléchargements sur les sujets répétés |
 | Import de clips IA générés (Colab / Wan / LTX) | ✅ ils remplacent les visuels auto |
 | Habillage : barre de progression + signature | ✅ |
 | Vignette générée par IA + titre incrusté | ✅ |
@@ -113,6 +114,10 @@ Sans `S3_PUBLIC_BASE_URL`, l'API renvoie une URL présignée (7 jours).
 | `S3_PUBLIC_BASE_URL` | — | base CDN pour liens directs |
 | `PEXELS_API_KEY` | — | active les vidéos stock Pexels (clé gratuite) |
 | `PIXABAY_API_KEY` | — | active les vidéos stock Pixabay (clé gratuite) |
+| `PEXELS_CACHE_ENABLED` | `true` | cache local des clips stock |
+| `PEXELS_CACHE_TTL_DAYS` | `30` | durée de vie d'une entrée (`0` = jamais) |
+| `PEXELS_CACHE_MAX_GB` | `5` | plafond de taille, purge LRU au démarrage |
+| `PEXELS_CACHE_DIR` | `data/cache/pexels` | dossier du cache |
 | `NVIDIA_API_KEY` | — | script IA via **NVIDIA NIM** (build.nvidia.com, clé gratuite) |
 | `NVIDIA_MODEL` | `nvidia/nemotron-3-super-120b-a12b` | modèle NIM |
 | `GEMINI_API_KEY` | — | script IA via Google Gemini (offre gratuite) |
@@ -151,7 +156,7 @@ GEMINI_API_KEY=xxx python app.py         # aistudio.google.com → clé gratuite
 | GET | `/api/jobs/{id}` | Statut, progression, vidéo, vignette, métadonnées |
 | GET | `/api/voices` | Liste des voix |
 | POST | `/api/upload-clips` | Upload de clips IA → dossier réutilisable |
-| GET | `/api/config` | Backends actifs + limites batch |
+| GET | `/api/config` | Backends actifs + limites batch + état du cache |
 | GET | `/videos/{...}.mp4` | Téléchargement |
 
 ```bash
@@ -220,6 +225,24 @@ Chaque job expose le diagnostic dans `meta` et dans `duration.json` :
 { "target_duration": 30, "audio_duration": 29.7, "final_video_duration": 29.8 }
 ```
 
+## Cache local des clips stock
+
+Les plans Pexels/Pixabay déjà téléchargés sont conservés dans `data/cache/pexels/`
+(git-ignoré) : sur un sujet déjà traité, la vidéo est montée **sans aucun appel à
+l'API ni nouveau téléchargement**. Chaque entrée est validée par `ffprobe` avant
+d'être publiée, et l'écriture est atomique (fichier temporaire + `os.replace`),
+donc un téléchargement interrompu n'est jamais pris pour un clip valide.
+
+- **Clé** : SHA-256 de `(fournisseur, requête, orientation)` — la requête n'est
+  jamais utilisée comme nom de fichier, et aucune clé API n'est stockée.
+- **TTL** : `PEXELS_CACHE_TTL_DAYS` (défaut 30 j) ; **plafond** :
+  `PEXELS_CACHE_MAX_GB` (défaut 5 Go), purge LRU au démarrage du serveur.
+- **Concurrence** : un même plan n'est téléchargé qu'une fois, même si plusieurs
+  jobs tournent en parallèle.
+- **Provenance** : `meta.visual_scene_origins` indique, scène par scène,
+  `pexels_cache` / `pexels_api` / `reused`, et `meta.visual_cache` les compteurs
+  (`hits`, `misses`, `stored`…). `GET /api/config` expose l'état du cache.
+
 ## Déploiement
 
 L'image embarque FFmpeg et les polices, donc rien à installer côté serveur.
@@ -238,8 +261,9 @@ Sur **Render** : `render.yaml` décrit le service (runtime Docker, plan free,
 même image, la variable `PORT` est respectée.
 
 ⚠️ Sur les hébergeurs à disque éphémère (Render free, Fly sans volume), les
-vidéos de `output/` disparaissent au redémarrage. Pour les conserver, active le
-backend S3 (`STORAGE_BACKEND=s3`) — c'est exactement ce à quoi il sert.
+vidéos de `output/` **et le cache de clips** disparaissent au redémarrage. Pour
+conserver les vidéos, active le backend S3 (`STORAGE_BACKEND=s3`) ; le cache, lui,
+se reconstruit tout seul (il ne fait qu'éviter des téléchargements répétés).
 
 ## Architecture
 
@@ -257,6 +281,7 @@ pipeline/thumbnail.py → vignette (fond IA + titre Pillow)
 pipeline/tts.py       → edge-tts + timings mot par mot
 pipeline/subtitles.py → sous-titres ASS karaoké (fade + mot actif)
 pipeline/visuals.py   → stock Pexels/Pixabay (une recherche par scène) ou scènes animées
+pipeline/stock_cache.py → cache local des clips stock (clé SHA-256, TTL, purge LRU)
 pipeline/overlay.py   → barre de progression + signature (drawtext)
 pipeline/compose.py   → montage final 9:16
 pipeline/storage.py   → stockage local ou S3

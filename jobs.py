@@ -285,7 +285,9 @@ def produce(job_id: str, req: dict) -> None:
                         "clips": [c.name for c in (clips or [])],
                         "source": visuals_meta.get("source", "local_fallback"),
                         "sources": visuals_meta.get("sources", []),
-                        "queries": visuals_meta.get("queries", [])},
+                        "queries": visuals_meta.get("queries", []),
+                        "scene_origins": visuals_meta.get("scene_origins", []),
+                        "cache": visuals_meta.get("cache", {})},
                        ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -330,6 +332,8 @@ def produce(job_id: str, req: dict) -> None:
                 "visual_source": visuals_meta.get("source", "local_fallback"),
                 "visual_sources": visuals_meta.get("sources", []),
                 "visual_queries": visuals_meta.get("queries", []),
+                "visual_scene_origins": visuals_meta.get("scene_origins", []),
+                "visual_cache": visuals_meta.get("cache", {}),
             },
         )
     except Exception as exc:  # noqa: BLE001 - surface any failure to the client

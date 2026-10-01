@@ -139,6 +139,49 @@ def test_stock_clips_are_downloaded_and_montaged(tmp_path, monkeypatch, clip_ser
     assert result.path.exists()
     assert _size(result.path) == (1080, 1920)
     assert abs(_duration(result.path) - 20.0) < 0.2
+    # First pass populates the cache; every distinct scene came from the API.
+    assert result.cache_stats["stored"] >= 1
+    assert result.cache_stats["hits"] == 0
+    assert result.scene_origins.count("pexels_api") >= 3
+    assert "pexels_cache" not in result.scene_origins
+
+
+def test_stock_clips_are_served_from_cache_on_second_run(tmp_path, monkeypatch, clip_server):
+    base, catalog = clip_server
+    monkeypatch.setenv("PEXELS_API_KEY", "test-key")
+    monkeypatch.delenv("PIXABAY_API_KEY", raising=False)
+
+    # Distinct ids so each scene gets its own entry (and its own cache key).
+    def many_candidates(name, query, limit=12):
+        return [
+            {"id": f"clip{index}", "url": f"{base}/portrait.mp4",
+             "duration": 3.0, "width": 1080, "height": 1920}
+            for index in range(10)
+        ]
+
+    monkeypatch.setattr(visuals, "_candidates", many_candidates)
+
+    script = "La ville brille. Les rues sont vides. Le ciel rougeoie. Tout dort."
+    first = visuals.build_background_info(
+        20.0, tmp_path / "work1", query="city", use_stock=True, script=script,
+    )
+    assert first.cache_stats["stored"] >= 1
+    assert first.cache_stats["hits"] == 0
+
+    # The provider must not be consulted again for the same scene queries.
+    def forbidden(*args, **kwargs):
+        raise AssertionError("cache miss: the provider was queried again")
+
+    monkeypatch.setattr(visuals, "_candidates", forbidden)
+    second = visuals.build_background_info(
+        20.0, tmp_path / "work2", query="city", use_stock=True, script=script,
+    )
+    assert second.visual_source == "pexels"
+    assert second.cache_stats["hits"] >= 1
+    assert second.cache_stats["stored"] == 0
+    assert all(origin == "pexels_cache" for origin in second.scene_origins)
+    assert second.path.exists()
+    assert abs(_duration(second.path) - 20.0) < 0.2
 
 
 def test_provider_failure_falls_back_to_local(tmp_path, monkeypatch):
