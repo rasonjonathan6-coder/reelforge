@@ -155,6 +155,53 @@ def test_provider_failure_falls_back_to_local(tmp_path, monkeypatch):
     assert result.visual_source == "local_fallback"
 
 
+def test_zoompan_keeps_source_motion(tmp_path):
+    """`d` must not swallow the clip's frames: a moving clip and a still image
+    must not render identically under the scene filter."""
+    from PIL import Image, ImageChops, ImageStat
+
+    def still(path):
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+             "-i", "testsrc=size=1080x1920:rate=30:duration=1",
+             "-frames:v", "1", str(path)],
+            check=True,
+        )
+
+    moving = tmp_path / "moving.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+         "-i", "testsrc=size=1080x1920:rate=30:duration=6",
+         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(moving)],
+        check=True,
+    )
+    frozen = tmp_path / "frozen.png"
+    still(frozen)
+
+    filt = visuals._cover_filter()
+    rendered = {}
+    for name, source, extra in (("moving", moving, ["-stream_loop", "-1"]),
+                                ("frozen", frozen, ["-loop", "1"])):
+        out = tmp_path / f"out_{name}.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", *extra, "-i", str(source),
+             "-t", "4", "-vf", filt, "-an", "-c:v", "libx264", "-preset", "ultrafast",
+             "-pix_fmt", "yuv420p", str(out)],
+            check=True,
+        )
+        frame = tmp_path / f"frame_{name}.png"
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-ss", "2", "-i", str(out),
+             "-frames:v", "1", str(frame)],
+            check=True,
+        )
+        rendered[name] = Image.open(frame).convert("RGB")
+
+    diff = ImageChops.difference(rendered["moving"], rendered["frozen"]).convert("L")
+    changed = sum(diff.histogram()[21:]) / diff.size[0] / diff.size[1]
+    assert changed > 0.05, "scene filter froze the clip: only the first frame survives"
+
+
 def test_caller_clips_win_over_stock(tmp_path, monkeypatch, clip_server):
     base, catalog = clip_server
     monkeypatch.setenv("PEXELS_API_KEY", "test-key")

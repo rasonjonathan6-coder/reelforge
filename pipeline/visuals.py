@@ -31,6 +31,8 @@ SCENE_SECONDS = 4.0  # target on-screen time per generated scene
 MAX_STOCK_SCENES = 8  # cap on stock searches per reel (keeps downloads sane)
 MIN_CLIP_SECONDS = 1.0  # ignore stock entries too short to be usable
 MIN_CLIP_HEIGHT = 720  # ignore stock renditions below this height
+ZOOM_PER_SECOND = 0.02  # Ken Burns speed; must be slow enough to stay subtle
+ZOOM_MAX = 1.15  # never zoom past this, whatever the scene length
 
 PEXELS_URL = "https://api.pexels.com"
 PIXABAY_URL = "https://pixabay.com"
@@ -154,7 +156,7 @@ def _join_xfade(segments: list[Path], duration: float, out_path: Path) -> Path:
 def _scene_filters() -> str:
     """Slow zoom + grain + vignette: reads as footage rather than a flat loop."""
     return (
-        f"zoompan=z='min(zoom+0.0005,1.10)':d={int(SCENE_SECONDS * FPS) + 1}"
+        f"zoompan=z='min(1+{ZOOM_PER_SECOND}*in_time,{ZOOM_MAX})':d=1"
         f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={WIDTH}x{HEIGHT}:fps={FPS},"
         f"noise=alls=7:allf=t+u,"
         f"vignette=PI/4.5,"
@@ -435,12 +437,16 @@ def _collect_stock(queries: list[str], work_dir: Path) -> tuple[list[Path], list
 # ---------------------------------------------------------------------------
 # Assembly
 # ---------------------------------------------------------------------------
-def _cover_filter(per_scene: float) -> str:
-    """Fill 1080x1920 by cropping, never by stretching (aspect ratio kept)."""
+def _cover_filter() -> str:
+    """Fill 1080x1920 by cropping, never by stretching (aspect ratio kept).
+
+    `d=1` lets every source frame through, so the clip's own motion is kept;
+    the zoom is driven by `in_time` so it still progresses across the scene.
+    """
     return (
         f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
         f"crop={WIDTH}:{HEIGHT},"
-        f"zoompan=z='min(zoom+0.0006,1.15)':d={int(per_scene * FPS)}:"
+        f"zoompan=z='min(1+{ZOOM_PER_SECOND}*in_time,{ZOOM_MAX})':d=1:"
         f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={WIDTH}x{HEIGHT}:fps={FPS},"
         f"format=yuv420p"
     )
@@ -458,7 +464,7 @@ def _montage(clips: list[Path], duration: float, work_dir: Path, out_path: Path)
             "ffmpeg", "-y", "-loglevel", "error",
             "-stream_loop", "-1", "-i", str(clip),
             "-t", f"{per_scene:.3f}",
-            "-vf", _cover_filter(per_scene), "-an",
+            "-vf", _cover_filter(), "-an",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
             "-pix_fmt", "yuv420p", str(seg),
         ])

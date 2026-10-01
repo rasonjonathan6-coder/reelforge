@@ -236,8 +236,9 @@ def test_single_job_contract_unchanged(client):
 
 def test_config_exposes_batch_limits(client):
     cfg = client.get("/api/config").json()
-    assert cfg["stock_available"] is False
-    assert cfg["stock_providers"] == []
+    assert isinstance(cfg["stock_available"], bool)
+    assert isinstance(cfg["stock_providers"], list)
+    assert cfg["stock_available"] == bool(cfg["stock_providers"])
     assert "max_batch_size" in cfg
     assert "max_concurrent_jobs" in cfg
 

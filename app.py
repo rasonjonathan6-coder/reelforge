@@ -41,6 +41,9 @@ class GenerateRequest(BaseModel):
     topic: str = ""
     auto_script: bool = False
     duration: int = Field(45, ge=15, le=90)
+    language: str = "français"
+    style: str = "storytelling"
+    tone: str = "dynamic"
     voice: str = tts.DEFAULT_VOICE
     rate: str = tts.DEFAULT_RATE
     query: str = "city night vertical"
