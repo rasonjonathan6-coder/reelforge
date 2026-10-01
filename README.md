@@ -13,12 +13,35 @@ vignette et métadonnées** (titre, description, hashtags).
 | Vraie vidéo 30-60 s, format Reels/TikTok/Shorts | ✅ |
 | Script généré depuis un sujet | ✅ générateur local intégré (sans clé) ou LLM gratuit optionnel |
 | Voix off IA (edge-tts, 400+ voix, 100+ langues) | ✅ gratuit, illimité |
-| Sous-titres animés synchronisés mot par mot | ✅ |
-| Visuels qui bougent (dégradés animés ou stock Pexels) | ✅ |
+| Sous-titres animés synchronisés mot par mot | ✅ fade + mot actif en couleur |
+| Visuels qui bougent (scènes animées, transitions, grain) | ✅ |
+| Vidéos stock gratuites (Pexels **ou** Pixabay, clés gratuites) | ✅ |
+| Import de clips IA générés (Colab / Wan / LTX) | ✅ ils remplacent les visuels auto |
+| Habillage : barre de progression + signature | ✅ |
 | Vignette générée par IA + titre incrusté | ✅ |
 | Titre, description, hashtags auto | ✅ |
 | Personnage IA généré qui parle (lip-sync) | ❌ nécessite un GPU ou une API payante |
-| GPU local / CUDA | ❌ ce pipeline est CPU-only (FFmpeg + edge-tts) |
+| Générer une scène vidéo IA *sur ce serveur* | ❌ CPU-only ; à faire sur Colab (voir plus bas) |
+
+### La voix est-elle « vraie » ?
+
+C'est une **voix neuronale** (Microsoft Neural via edge-tts), pas une voix robot
+des années 2010 : respirations, intonations et liaisons correctes. Sur un reel de
+30 s, elle passe pour humaine. Il n'existe **aucun** TTS français à la fois
+naturel, illimité et gratuit sans GPU : les voix vraiment indiscernables
+(ElevenLabs, Cartesia) sont payantes ou nécessitent un GPU.
+
+La voix par défaut est `fr-FR-VivienneMultilingualNeural` à `-5 %`, plus
+naturelle que l'ancienne Denise à `+8 %` (le débit rapide trahit la synthèse).
+
+### De la vraie vidéo IA, gratuitement
+
+La génération vidéo IA exige un GPU : c'est une contrainte matérielle, pas une
+limite de ReelForge. Le notebook `colab/ReelForge_Video_IA_Colab.ipynb` génère de
+vrais plans avec **Wan 2.1** (Apache 2.0, gratuit, commercialisable) sur le **T4
+gratuit de Colab**. Tu télécharges les clips, tu les déposes dans le champ
+« Clips IA générés » de l'interface, et ReelForge les monte avec ta voix et tes
+sous-titres. Colab fournit le GPU, ReelForge fait le reste.
 
 ## Démarrage
 
@@ -123,6 +146,7 @@ GEMINI_API_KEY=xxx python app.py         # aistudio.google.com → clé gratuite
 | POST | `/api/generate` | Crée un job, renvoie `job_id` |
 | GET | `/api/jobs/{id}` | Statut, progression, vidéo, vignette, métadonnées |
 | GET | `/api/voices` | Liste des voix |
+| POST | `/api/upload-clips` | Upload de clips IA → dossier réutilisable |
 | GET | `/api/config` | Backends actifs |
 | GET | `/videos/{id}.mp4` | Téléchargement |
 
@@ -133,7 +157,13 @@ curl -X POST localhost:8000/api/script -H 'Content-Type: application/json' \
 
 # Vidéo
 curl -X POST localhost:8000/api/generate -H 'Content-Type: application/json' \
-  -d '{"text":"Ton script...","voice":"fr-FR-DeniseNeural","rate":"+8%","use_stock":false}'
+  -d '{"text":"Ton script...","voice":"fr-FR-VivienneMultilingualNeural","rate":"-5%","use_stock":false}'
+
+# Vidéo montée depuis tes propres clips IA
+curl -X POST localhost:8000/api/upload-clips -F "files=@clip1.mp4" -F "files=@clip2.mp4"
+# -> {"clips_dir":".../output/clips/xxxx","count":2}
+curl -X POST localhost:8000/api/generate -H 'Content-Type: application/json' \
+  -d '{"text":"Ton script...","clips_dir":".../output/clips/xxxx","logo":"@ma.chaine"}'
 ```
 
 ## Déploiement
@@ -170,8 +200,9 @@ generate.py           → orchestrateur + CLI
 pipeline/script_writer.py → script + métadonnées (générateur local, LLM optionnel)
 pipeline/thumbnail.py → vignette (fond IA + titre Pillow)
 pipeline/tts.py       → edge-tts + timings mot par mot
-pipeline/subtitles.py → sous-titres ASS karaoké
-pipeline/visuals.py   → visuels générés (ffmpeg) ou stock Pexels
+pipeline/subtitles.py → sous-titres ASS karaoké (fade + mot actif)
+pipeline/visuals.py   → scènes animées (xfade/grain) ou stock Pexels/Pixabay
+pipeline/overlay.py   → barre de progression + signature (drawtext)
 pipeline/compose.py   → montage final 9:16
 pipeline/storage.py   → stockage local ou S3
 ```
@@ -181,7 +212,8 @@ pipeline/storage.py   → stockage local ou S3
 - LLM indisponible ou limité → métadonnées générées localement (heuristique), la
   vidéo se fait quand même.
 - API image indisponible → fond de vignette en dégradé.
-- Pexels indisponible ou sans clé → visuels générés par FFmpeg.
+- Pexels/Pixabay indisponible ou sans clé → scènes animées générées par FFmpeg.
+- FFmpeg sans `drawtext` → habillage ignoré, la vidéo se termine quand même.
 - Redis indisponible → repli automatique sur le pool local.
 
 ## Ligne de commande
@@ -189,4 +221,5 @@ pipeline/storage.py   → stockage local ou S3
 ```bash
 python generate.py --script examples/script.txt --out output/reel.mp4 --no-stock
 python generate.py --text "Ton script ici..." --out output/reel.mp4
+python generate.py --text "..." --out output/reel.mp4 --clips ~/clips_ia --logo "@ma.chaine"
 ```

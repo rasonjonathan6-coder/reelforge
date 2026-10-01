@@ -14,10 +14,12 @@ from pathlib import Path
 
 from config import REDIS_URL, ROOT
 from generate import generate
-from pipeline import script_writer, storage, thumbnail
+from pipeline import script_writer, storage, thumbnail, tts
 
 OUTPUT_DIR = ROOT / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+CLIP_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm"}
 
 
 @dataclass
@@ -107,14 +109,26 @@ def produce(job_id: str, req: dict) -> None:
         thumb_url = storage.upload(thumb_path, f"{job_id}.jpg")
 
         update(job_id, progress=35, step="Voix off et montage")
+        clips_dir = req.get("clips_dir")
+        clips = None
+        if clips_dir:
+            folder = Path(clips_dir)
+            if not folder.is_dir():
+                raise ValueError(f"Dossier de clips introuvable : {clips_dir}")
+            clips = sorted(p for p in folder.iterdir() if p.suffix.lower() in CLIP_SUFFIXES)
+            if not clips:
+                raise ValueError(f"Aucun clip vidéo dans {clips_dir}")
+
         generate(
             text=script,
             out_path=video_path,
-            voice=req.get("voice", "fr-FR-DeniseNeural"),
-            rate=req.get("rate", "+8%"),
+            voice=req.get("voice", tts.DEFAULT_VOICE),
+            rate=req.get("rate", tts.DEFAULT_RATE),
             query=req.get("query", "city night vertical"),
             use_stock=req.get("use_stock", True),
             work_dir=work,
+            clips=clips,
+            logo_text=req.get("logo") or None,
         )
 
         update(job_id, progress=90, step="Publication")

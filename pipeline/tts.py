@@ -12,7 +12,8 @@ from pathlib import Path
 
 import edge_tts
 
-DEFAULT_VOICE = "fr-FR-DeniseNeural"
+DEFAULT_VOICE = "fr-FR-VivienneMultilingualNeural"
+DEFAULT_RATE = "-5%"  # slower reads as far more natural than the old +8%
 TICKS_PER_SECOND = 10_000_000
 
 

@@ -12,10 +12,12 @@ from pipeline.tts import WordTiming
 
 PLAY_RES = (1080, 1920)
 FONT = "DejaVu Sans"
-FONT_SIZE = 92
+FONT_SIZE = 96
 HIGHLIGHT = "&H0000E5FF"  # BGR: orange-yellow
 BASE_COLOR = "&H00FFFFFF"  # white
 OUTLINE_COLOR = "&H00000000"
+# Captions sit above the bottom safe area so TikTok/Reels UI never covers them.
+MARGIN_V = 420
 
 
 def _ts(seconds: float) -> str:
@@ -54,7 +56,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption,{FONT},{FONT_SIZE},{BASE_COLOR},&H000000FF,{OUTLINE_COLOR},&H64000000,-1,0,0,0,100,100,0,0,1,6,3,2,80,80,320,1
+Style: Caption,{FONT},{FONT_SIZE},{BASE_COLOR},&H000000FF,{OUTLINE_COLOR},&H64000000,-1,0,0,0,100,100,0,0,1,7,4,2,80,80,{MARGIN_V},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -70,8 +72,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             text = " ".join(parts)
             start = active.start
             end = min(active.end + 0.12, chunk[-1].end + 0.25)
+            # Short pop on the whole line + fade in/out keeps captions lively
+            # without the jitter a per-word scale animation would cause.
+            lead = f"{{\\fad(80,60)\\fscx104\\fscy104\\t(0,140,\\fscx100\\fscy100)}}"
             lines.append(
-                f"Dialogue: 0,{_ts(start)},{_ts(end)},Caption,,0,0,0,,{text}"
+                f"Dialogue: 0,{_ts(start)},{_ts(end)},Caption,,0,0,0,,{lead}{text}"
             )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,9 +1,11 @@
 FROM python:3.12-slim
 
-# ffmpeg + fonts are required by the pipeline (video assembly, subtitles, thumbnails)
+# ffmpeg + fonts are required by the pipeline (video assembly, subtitles, thumbnails).
+# drawtext (branding overlay) needs a full FFmpeg build, so verify it at build time.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ffmpeg -hide_banner -filters | grep -q drawtext
 
 WORKDIR /app
 

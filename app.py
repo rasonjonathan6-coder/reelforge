@@ -6,21 +6,25 @@ or Celery + Redis for horizontal scaling. Storage is local disk or S3-compatible
 
 from __future__ import annotations
 
+import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from config import LLM_PROVIDER, QUEUE_BACKEND, ROOT, STORAGE_BACKEND, WORKER_COUNT
-from jobs import OUTPUT_DIR, Job, load, produce, save
-from pipeline import script_writer
+from jobs import CLIP_SUFFIXES, OUTPUT_DIR, Job, load, produce, save
+from pipeline import script_writer, tts
 
-app = FastAPI(title="ReelForge", version="2.0.0")
+app = FastAPI(title="ReelForge", version="2.1.0")
 
 executor = ThreadPoolExecutor(max_workers=WORKER_COUNT)
+
+CLIPS_DIR = OUTPUT_DIR / "clips"
 
 
 class GenerateRequest(BaseModel):
@@ -28,10 +32,12 @@ class GenerateRequest(BaseModel):
     topic: str = ""
     auto_script: bool = False
     duration: int = Field(45, ge=15, le=90)
-    voice: str = "fr-FR-DeniseNeural"
-    rate: str = "+8%"
+    voice: str = tts.DEFAULT_VOICE
+    rate: str = tts.DEFAULT_RATE
     query: str = "city night vertical"
     use_stock: bool = True
+    logo: str = ""
+    clips_dir: str = ""
 
 
 class ScriptRequest(BaseModel):
@@ -88,6 +94,28 @@ def generate_script(req: ScriptRequest) -> dict:
         return {"script": script}
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"Génération du script impossible : {exc}")
+
+
+@app.post("/api/upload-clips")
+async def upload_clips(files: list[UploadFile] = File(...)) -> dict:
+    """Accept AI-generated (or any) clips and return a folder the job can use."""
+    folder = CLIPS_DIR / uuid.uuid4().hex[:12]
+    folder.mkdir(parents=True, exist_ok=True)
+    saved: list[str] = []
+    for upload in files:
+        name = Path(upload.filename or "clip.mp4").name
+        if Path(name).suffix.lower() not in CLIP_SUFFIXES:
+            continue
+        dest = folder / name
+        with open(dest, "wb") as handle:
+            shutil.copyfileobj(upload.file, handle)
+        saved.append(name)
+    if not saved:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(
+            400, f"Aucun clip valide. Formats acceptés : {', '.join(sorted(CLIP_SUFFIXES))}"
+        )
+    return {"clips_dir": str(folder), "clips": saved, "count": len(saved)}
 
 
 @app.get("/api/voices")

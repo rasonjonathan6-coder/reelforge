@@ -64,6 +64,8 @@
   .tags{display:flex;flex-wrap:wrap;gap:6px}
   .tag{background:#0e0e17;border:1px solid var(--line);border-radius:99px;padding:4px 10px;font-size:12.5px;color:#c3b6ff}
   .free{margin-top:16px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+  .hint{font-size:12px;color:var(--muted);margin:-4px 0 14px}
+  input[type=file]{width:100%;font-size:12px;color:var(--muted)}
   .free b{color:var(--ok)}
   .hidden{display:none}
 </style>
@@ -123,20 +125,33 @@
       <div>
         <label for="rate">Débit</label>
         <select id="rate">
+          <option value="-5%" selected>Naturel (-5 %)</option>
           <option value="+0%">Normal</option>
-          <option value="+8%" selected>Rapide (+8 %)</option>
+          <option value="+8%">Rapide (+8 %)</option>
           <option value="+15%">Très rapide (+15 %)</option>
-          <option value="-8%">Lent (-8 %)</option>
+          <option value="-12%">Posé (-12 %)</option>
         </select>
       </div>
       <div>
         <label for="stock">Images</label>
         <select id="stock">
           <option value="0" selected>Visuels générés</option>
-          <option value="1">Vidéos stock Pexels</option>
+          <option value="1">Vidéos stock (Pexels/Pixabay)</option>
         </select>
       </div>
     </div>
+
+    <div class="row">
+      <div>
+        <label for="logo">Signature (optionnel)</label>
+        <input id="logo" placeholder="ex: @ma.chaine">
+      </div>
+      <div>
+        <label for="clips">Clips IA générés (Colab) — optionnel</label>
+        <input id="clips" type="file" accept="video/*" multiple>
+      </div>
+    </div>
+    <div class="hint" id="clipsHint">Dépose ici des plans générés par IA (Wan, LTX…). Ils remplacent les visuels automatiques.</div>
 
     <button class="primary" id="go">Générer ma vidéo</button>
     <div class="free">Aucune inscription, aucune limite. <b>Gratuit pour toujours</b> — script (LLM gratuit), voix (edge-tts), visuels et montage (FFmpeg) tournent côté serveur, sans coût par vidéo.</div>
@@ -179,7 +194,7 @@ async function loadVoices(){
   try{
     const r = await fetch('/api/voices'); const d = await r.json();
     $('voice').innerHTML = d.voices.map(v=>`<option value="${v.id}">${v.label}</option>`).join('');
-  }catch(e){ $('voice').innerHTML = '<option value="fr-FR-DeniseNeural">Denise (femme, FR)</option>'; }
+  }catch(e){ $('voice').innerHTML = '<option value="fr-FR-VivienneMultilingualNeural">Vivienne (femme, FR)</option>'; }
 }
 loadVoices();
 
@@ -232,8 +247,22 @@ async function generate(){
     text: text, topic: topic, auto_script: false,
     voice: $('voice').value, rate: $('rate').value,
     query: $('query').value || 'city night vertical',
-    use_stock: $('stock').value === '1'
+    use_stock: $('stock').value === '1',
+    logo: ($('logo').value || '').trim()
   };
+
+  // AI-generated clips take priority over every automatic visual source.
+  const clipFiles = $('clips').files;
+  if(clipFiles && clipFiles.length){
+    $('step').textContent = 'Envoi des clips…';
+    try{
+      const fd = new FormData();
+      for(const f of clipFiles) fd.append('files', f);
+      const up = await fetch('/api/upload-clips',{method:'POST',body:fd});
+      if(!up.ok) throw new Error((await up.json()).detail || 'Upload impossible');
+      body.clips_dir = (await up.json()).clips_dir;
+    }catch(e){ fail(e.message); return; }
+  }
 
   let jobId;
   try{
