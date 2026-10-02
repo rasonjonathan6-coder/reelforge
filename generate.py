@@ -18,7 +18,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from pipeline import compose, overlay, subtitles, tts, visuals
+from pipeline import compose, music, overlay, script_writer, subtitles, tts, visuals
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_FFMPEG = ROOT / ".." / "bin" / "ffmpeg"
@@ -55,6 +55,9 @@ def generate(
     info_out: Path | None = None,
     speech=None,
     target_duration: float | None = None,
+    speakers: list[str] | None = None,
+    music_enabled: bool = True,
+    music_mood: str | None = None,
 ) -> Path:
     """Render one reel.
 
@@ -66,6 +69,10 @@ def generate(
     duration-fitting loop so the TTS is not run twice); when omitted it is
     synthesized here. `target_duration` is only recorded for diagnostics.
     `topic` seeds the stock-footage searches, together with the narration.
+    `speakers`, when the voice-over is a two-character dialogue, colours each
+    character's captions differently. `music_enabled` adds a generated,
+    ducked music bed whose mood is derived from `topic`/`text` unless
+    `music_mood` names one explicitly.
     """
     _ensure_ffmpeg()
     tmp = Path(work_dir) if work_dir else Path(tempfile.mkdtemp(prefix="reel_"))
@@ -84,7 +91,7 @@ def generate(
 
     report("subtitles", 50)
     print("[2/5] Building karaoke subtitles...")
-    ass = subtitles.build_ass(speech.words, tmp / "captions.ass")
+    ass = subtitles.build_ass(speech.words, tmp / "captions.ass", speakers=speakers)
 
     report("visuals", 60)
     print("[3/5] Preparing visuals...")
@@ -109,10 +116,31 @@ def generate(
         except Exception as exc:  # noqa: BLE001 - overlay is cosmetic, never fatal
             print(f"      -> overlay skipped ({exc})")
 
+    # Music last: the video is already cut to length, so the bed matches exactly.
+    # A failure here is cosmetic and never fails the render.
+    music_meta: dict = {}
+    if music_enabled:
+        try:
+            music_meta = music.build(
+                out_path, tmp, duration,
+                mood=music_mood, topic=topic, script=text,
+            )
+            shutil.move(music_meta["path"], str(out_path))
+            print(f"      -> musique « {music_meta['label']} » (voix duckée)")
+        except Exception as exc:  # noqa: BLE001 - music is optional
+            print(f"      -> musique ignorée ({exc})")
+            music_meta = {}
+
     if info_out:
         info_out.mkdir(parents=True, exist_ok=True)
         shutil.copy(speech.audio_path, info_out / "audio.mp3")
         shutil.copy(ass, info_out / "subtitles.ass")
+        if music_meta:
+            (info_out / "music.json").write_text(
+                json.dumps({k: v for k, v in music_meta.items() if k != "path"},
+                           ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         (info_out / "visuals.json").write_text(
             json.dumps(
                 {
@@ -143,6 +171,58 @@ def generate(
 
     print(f"Done: {out_path}")
     return out_path
+
+
+def _dialogue_characters(turns: list) -> list[str]:
+    """Character names in first-appearance order (all of them)."""
+    return script_writer.characters_of(turns)
+
+
+def cast_dialogue(turns: list, base_voice: str, cast: str | None = None) -> list:
+    """Give each character a voice according to the requested `cast`.
+
+    A one-character script keeps that single voice. With two or more, `cast`
+    picks the distribution: `mixte` (man + woman, the default), `femme`
+    (femme+femme) or `homme` (homme+homme). This is the single casting entry
+    point shared by the CLI and `jobs.produce`, so behaviour never diverges.
+    """
+    characters = _dialogue_characters(turns)
+    if not characters:
+        return []
+    voices = tts.resolve_cast(base_voice, len(characters), cast)
+    voice_by_name = dict(zip(characters, voices))
+    return [
+        tts.DialogueLine(turn.speaker, turn.text, voice_by_name[turn.speaker])
+        for turn in turns
+    ]
+
+
+def _cast_from_args(args) -> str | None:
+    """Normalise the CLI `--cast` choice to what the pipeline expects."""
+    return tts.cast_genders(getattr(args, "cast", None))
+
+
+def _dialogue_speech(text: str, args, work: Path):
+    """Build the dialogue voice-over for the CLI.
+
+    A user-supplied `Nom: réplique` script is authoritative; otherwise the
+    topic is turned into a dialogue sized to `--duration`. Returns
+    `(speech, script)` so the caller keeps the exact text that was voiced.
+    """
+    turns = script_writer.parse_dialogue(text) if text.strip() else []
+    script = text
+    if not turns:
+        turns, script = script_writer.write_dialogue_script(
+            args.topic or "",
+            duration=args.duration,
+            language=args.language,
+            rate=args.rate,
+        )
+    lines = cast_dialogue(turns, args.voice, _cast_from_args(args))
+    speech = tts.synthesize_dialogue(
+        lines, work / "voice.mp3", rate=args.rate
+    )
+    return speech, script
 
 
 def _probe_duration(path: Path) -> float | None:
@@ -178,13 +258,17 @@ def _batch_main(args) -> None:
         "query": args.query,
         "use_stock": not args.no_stock,
         "logo": args.logo or "",
+        "dialogue": bool(args.dialogue),
+        "dialogue_cast": _cast_from_args(args),
+        "music": args.music,
+        "music_mood": args.music_mood or "",
     }
     run_batch_sync(topics, common, out_dir=args.output)
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate faceless vertical reels")
-    group = parser.add_mutually_exclusive_group(required=True)
+    group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument("--text", help="Narration text")
     group.add_argument("--script", type=Path, help="Path to a text file with narration")
     group.add_argument("--batch", type=Path, help="Path to a file with one topic per line")
@@ -201,6 +285,31 @@ def main() -> None:
     )
     parser.add_argument("--logo", help="Brand text shown at the top of the video")
     parser.add_argument("--keep-work", action="store_true")
+    # Dialogue / monologue (same behaviour as the API's `dialogue` field).
+    parser.add_argument(
+        "--dialogue", action="store_true",
+        help="Treat the text as a dialogue (`Nom: réplique` per line); a topic "
+             "auto-generates one. The voice count follows the characters.",
+    )
+    parser.add_argument(
+        "--cast", choices=["mixte", "femme", "homme"], default="mixte",
+        help="Dialogue voice distribution: mixte = homme + femme (default), "
+             "femme = femme + femme, homme = homme + homme",
+    )
+    # Music (on by default, matching the API); --no-music turns it off.
+    parser.add_argument(
+        "--music", dest="music", action="store_true", default=True,
+        help="Add a generated, ducked background music bed (default: on)",
+    )
+    parser.add_argument(
+        "--no-music", dest="music", action="store_false",
+        help="Disable background music",
+    )
+    parser.add_argument(
+        "--music-mood", default="",
+        choices=["", *music.MOODS.keys()],
+        help="Force a music mood instead of deriving it from the script",
+    )
     # Batch-only options.
     parser.add_argument("--language", default="français", help="Script language (batch)")
     parser.add_argument("--duration", type=int, default=30, help="Target seconds (batch)")
@@ -209,21 +318,35 @@ def main() -> None:
     parser.add_argument(
         "--output", type=Path, default=ROOT / "output" / "batches", help="Batch output folder"
     )
+    return parser
+
+
+def _parse_args(parser: argparse.ArgumentParser, argv: list[str]):
     # argparse reads a leading-dash value like "-5%" as an option; join it back.
-    argv = sys.argv[1:]
     for flag in ("--rate",):
         if flag in argv:
             i = argv.index(flag)
             if i + 1 < len(argv) and re.match(r"^-\d", argv[i + 1]):
                 argv[i] = f"{flag}={argv[i + 1]}"
                 del argv[i + 1]
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
+
+
+def main() -> None:
+    parser = build_parser()
+    args = _parse_args(parser, sys.argv[1:])
 
     if args.batch:
         _batch_main(args)
         return
 
-    text = args.text if args.text else args.script.read_text(encoding="utf-8").strip()
+    # A single reel needs some input: a text/script, or a topic (dialogue can
+    # auto-generate from a topic). Replaces argparse's required=True so that
+    # `--dialogue --topic "..."` works without a text file.
+    if not args.text and not args.script and not args.topic:
+        parser.error("fournis --text, --script, --batch ou --topic")
+
+    text = args.text if args.text else (args.script.read_text(encoding="utf-8").strip() if args.script else "")
     clips = None
     if args.clips:
         clips = sorted(
@@ -234,6 +357,18 @@ def main() -> None:
             raise SystemExit(f"Aucun clip vidéo trouvé dans {args.clips}")
 
     work = None if args.keep_work else None
+    speakers = None
+    speech = None
+    if args.dialogue:
+        # Dialogue needs the voice-over before `generate` so the per-character
+        # captions and the cast are known up front.
+        dialogue_work = args.out.parent / f".{args.out.stem}_work"
+        dialogue_work.mkdir(parents=True, exist_ok=True)
+        speech, text = _dialogue_speech(text, args, dialogue_work)
+        speakers = list(getattr(speech, "speakers", None) or [])
+        print(f"[dialogue] {len(speakers)} personnage(s), cast {_cast_from_args(args)} "
+              f"-> {speech.duration:.2f}s")
+
     generate(
         text=text,
         out_path=args.out,
@@ -245,6 +380,10 @@ def main() -> None:
         clips=clips,
         logo_text=args.logo,
         topic=args.topic or "",
+        speech=speech,
+        speakers=speakers,
+        music_enabled=args.music,
+        music_mood=args.music_mood or None,
     )
 
 

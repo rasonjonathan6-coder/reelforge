@@ -65,6 +65,8 @@
   .tag{background:#0e0e17;border:1px solid var(--line);border-radius:99px;padding:4px 10px;font-size:12.5px;color:#c3b6ff}
   .free{margin-top:16px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
   .hint{font-size:12px;color:var(--muted);margin:-4px 0 14px}
+  .check{display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.45;text-transform:none;letter-spacing:0;color:var(--text,#e7e7ea);cursor:pointer}
+  .check input{width:auto;margin:2px 0 0;flex:0 0 auto}
   input[type=file]{width:100%;font-size:12px;color:var(--muted)}
   .free b{color:var(--ok)}
   .hidden{display:none}
@@ -132,6 +134,18 @@
       <div style="margin-top:14px">
         <label for="text-topic">Script (modifiable)</label>
         <textarea id="text-topic" placeholder="Le script généré apparaîtra ici…"></textarea>
+        <label class="check" style="margin-top:10px">
+          <input type="checkbox" id="dialogue">
+          <span>Dialogue / monologue — la voix suit le nombre de personnages du script (1 personne = 1 voix), avec une couleur de sous-titre par personnage.</span>
+        </label>
+        <div style="margin-top:10px">
+          <label for="dialogue-cast">Voix des personnages</label>
+          <select id="dialogue-cast">
+            <option value="mixte" selected>Mixte (homme + femme)</option>
+            <option value="femme">Femme + femme</option>
+            <option value="homme">Homme + homme</option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -172,6 +186,20 @@
     </div>
 
     <div class="hint" id="stock-hint"></div>
+
+    <div class="row">
+      <div>
+        <label for="music">Musique de fond</label>
+        <select id="music">
+          <option value="1" selected>Générée (selon l'humeur du script)</option>
+          <option value="0">Sans musique</option>
+        </select>
+      </div>
+      <div>
+        <label for="music-mood">Humeur</label>
+        <select id="music-mood"></select>
+      </div>
+    </div>
 
     <div class="row">
       <div>
@@ -297,9 +325,37 @@
         </select>
       </div>
       <div>
+        <label for="b-music">Musique de fond</label>
+        <select id="b-music">
+          <option value="1" selected>Générée (selon l'humeur du script)</option>
+          <option value="0">Sans musique</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
         <label for="b-logo">Signature (optionnel)</label>
         <input id="b-logo" placeholder="ex: @ma.chaine">
       </div>
+      <div>
+        <label for="b-music-mood">Humeur musicale</label>
+        <select id="b-music-mood"></select>
+      </div>
+    </div>
+
+    <label class="check" style="margin-top:14px">
+      <input type="checkbox" id="b-dialogue">
+      <span>Dialogue / monologue — voix par personnage selon le script, sous-titres colorés.</span>
+    </label>
+
+    <div>
+      <label for="b-dialogue-cast">Voix des personnages</label>
+      <select id="b-dialogue-cast">
+        <option value="mixte" selected>Mixte (homme + femme)</option>
+        <option value="femme">Femme + femme</option>
+        <option value="homme">Homme + homme</option>
+      </select>
     </div>
 
     <div class="row">
@@ -349,7 +405,19 @@ async function loadVoices(){
     $('voice').innerHTML = fb; $('b-voice').innerHTML = fb;
   }
 }
+async function loadMusic(){
+  try{
+    const r = await fetch('/api/music'); const d = await r.json();
+    const moods = d.moods || [];
+    const opts = moods.map(m=>`<option value="${m.id}">${m.label}</option>`).join('');
+    $('music-mood').innerHTML = `<option value="">Auto (${escapeHtml(d.default_label||'selon le script')})</option>` + opts;
+    if($('b-music-mood')) $('b-music-mood').innerHTML = `<option value="">Auto</option>` + opts;
+  }catch(e){
+    $('music-mood').innerHTML = '<option value="">Auto</option>';
+  }
+}
 loadVoices();
+loadMusic();
 
 async function loadConfig(){
   try{
@@ -439,6 +507,10 @@ async function launchBatch(){
     rate: $('b-rate').value,
     query: $('b-query').value || 'city night vertical',
     use_stock: $('b-stock').value === '1',
+    dialogue: $('b-dialogue') && $('b-dialogue').checked,
+    dialogue_cast: $('b-dialogue-cast') ? $('b-dialogue-cast').value : '',
+    music: $('b-music') ? $('b-music').value === '1' : true,
+    music_mood: $('b-music-mood') ? $('b-music-mood').value : '',
     logo: ($('b-logo').value || '').trim()
   };
 
@@ -580,7 +652,9 @@ $('gen-script').addEventListener('click', async ()=>{
   const btn = $('gen-script'); btn.disabled = true; btn.textContent = 'Génération…';
   try{
     const r = await fetch('/api/script',{method:'POST',headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({topic, duration: parseInt($('duration').value)})});
+      body: JSON.stringify({topic, duration: parseInt($('duration').value),
+        dialogue: $('dialogue').checked, rate: $('rate').value,
+        dialogue_cast: $('dialogue-cast') ? $('dialogue-cast').value : ''})});
     if(!r.ok) throw new Error((await r.json()).detail || 'Erreur');
     $('text-topic').value = (await r.json()).script;
     delete $('text-topic').dataset.edited;
@@ -614,10 +688,14 @@ async function generate(){
 
   const body = {
     text: text, topic: topic, auto_script: isTopic && !$('text-topic').dataset.edited,
+    dialogue: isTopic && $('dialogue').checked,
+    dialogue_cast: $('dialogue-cast') ? $('dialogue-cast').value : '',
     duration: parseInt($('duration').value),
     voice: $('voice').value, rate: $('rate').value,
     query: $('query').value || 'city night vertical',
     use_stock: $('stock').value === '1',
+    music: $('music').value === '1',
+    music_mood: $('music-mood').value,
     logo: ($('logo').value || '').trim()
   };
 

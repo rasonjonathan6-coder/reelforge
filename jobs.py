@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import json
 import shutil
-import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from config import REDIS_URL, ROOT
-from generate import generate
+from generate import cast_dialogue, generate
 from pipeline import script_writer, storage, thumbnail, tts
 
 OUTPUT_DIR = ROOT / "output"
@@ -188,6 +187,65 @@ def _fit_speech(text: str, req: dict, target: float, work: Path, attempts: int =
     return best_speech, best_text
 
 
+def _dialogue_characters(turns: list) -> list[str]:
+    """Character names in first-appearance order (all of them)."""
+    return script_writer.characters_of(turns)
+
+
+def _cast_dialogue(turns: list, base_voice: str, cast: str | None = None) -> list[tts.DialogueLine]:
+    """Give each character a voice according to the requested `cast`.
+
+    Delegates to `generate.cast_dialogue` so the CLI and the API share one
+    casting implementation. A one-character script keeps that single voice;
+    with two or more, `cast` picks the distribution (`mixte` by default).
+    """
+    return cast_dialogue(turns, base_voice, cast)
+
+
+def _fit_dialogue(turns: list, req: dict, target: float, work: Path,
+                  attempts: int = MAX_DURATION_ATTEMPTS):
+    """Two-voice fitting: retry the dialogue until the audio lands on target.
+
+    Returns `(DialogueSpeech, plain_script)` where `plain_script` is the
+    `Nom: ...` text that produced the audio, so the archived script matches.
+    """
+    rate = req.get("rate", tts.DEFAULT_RATE)
+    pace = tts.BASE_WORDS_PER_SECOND * tts.rate_factor(rate)
+    probe_dir = work / ".fit"
+    probe_dir.mkdir(parents=True, exist_ok=True)
+
+    best_speech = None
+    best_text = ""
+    for attempt in range(attempts):
+        lines = _cast_dialogue(turns, req.get("voice", tts.DEFAULT_VOICE),
+                               req.get("dialogue_cast"))
+        if not lines:
+            break
+        speech = tts.synthesize_dialogue(lines, probe_dir / f"voice_{attempt}.mp3", rate=rate)
+        plain = "\n".join(f"{line.speaker}: {line.text}" for line in lines)
+        print(f"[dialogue] essai {attempt + 1}/{attempts} : {speech.duration:.2f}s "
+              f"({len(speech.words)} mots, {len(speech.speakers)} voix) pour une cible de {target}s")
+        if best_speech is None or abs(speech.duration - target) < abs(best_speech.duration - target):
+            best_speech, best_text = speech, plain
+        if abs(speech.duration - target) <= DURATION_TOLERANCE:
+            break
+        if attempt < attempts - 1:
+            needed = max(20, round(len(speech.words) * (target / max(speech.duration, 0.1))))
+            turns, _ = script_writer.write_dialogue_script(
+                req.get("topic", ""),
+                duration=max(1, round(needed / pace)),
+                language=req.get("language", "français"),
+                rate=rate,
+            )
+    if best_speech is not None:
+        best_speech = tts.retime(best_speech, target, DURATION_TOLERANCE)
+        final_audio = work / "voice_fit.mp3"
+        shutil.copy(best_speech.audio_path, final_audio)
+        best_speech.audio_path = final_audio
+    shutil.rmtree(probe_dir, ignore_errors=True)
+    return best_speech, best_text
+
+
 def produce(job_id: str, req: dict) -> None:
     work = _job_dir(job_id, req.get("batch_id"))
     work.mkdir(parents=True, exist_ok=True)
@@ -207,7 +265,20 @@ def produce(job_id: str, req: dict) -> None:
 
     try:
         script = req.get("text") or ""
-        if req.get("auto_script") and req.get("topic"):
+        dialogue_mode = bool(req.get("dialogue"))
+        turns: list = []
+        if dialogue_mode:
+            # A user-edited dialogue (already `Nom: réplique` lines) is
+            # authoritative; only generate when there is no usable script.
+            turns = script_writer.parse_dialogue(script) if script.strip() else []
+            if not turns:
+                turns, script = script_writer.write_dialogue_script(
+                    req.get("topic", ""),
+                    duration=req.get("duration", 45),
+                    language=req.get("language", "français"),
+                    rate=req.get("rate", tts.DEFAULT_RATE),
+                )
+        elif req.get("auto_script") and req.get("topic"):
             script = script_writer.write_script(
                 req["topic"],
                 duration=req.get("duration", 45),
@@ -218,7 +289,8 @@ def produce(job_id: str, req: dict) -> None:
         if len(script) < 20:
             raise ValueError("Script trop court : fournis un texte ou un sujet.")
         (work / "script.json").write_text(
-            json.dumps({"topic": req.get("topic", ""), "script": script},
+            json.dumps({"topic": req.get("topic", ""), "script": script,
+                        "dialogue": dialogue_mode},
                        ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -246,25 +318,44 @@ def produce(job_id: str, req: dict) -> None:
         target = float(req["duration"]) if req.get("duration") else None
         speech = None
         if req.get("auto_script") and req.get("topic") and target:
-            # The topic panel asks for an initial draft sized to the requested
-            # duration; regenerate it here (otherwise the fitting loop inherits
-            # a script built for a different duration and cannot converge).
-            script = script_writer.write_script(
-                req.get("topic", ""),
-                duration=max(1, round(target)),
-                language=req.get("language", "français"),
-                style=req.get("style", ""),
-                tone=req.get("tone", ""),
-                rate=req.get("rate", tts.DEFAULT_RATE),
-            )
-            # Fit the narration to the requested duration (max 3 TTS passes);
-            # a user-supplied text is respected as-is.
-            speech, script = _fit_speech(script, req, target, work)
+            if dialogue_mode:
+                turns, _ = script_writer.write_dialogue_script(
+                    req.get("topic", ""),
+                    duration=max(1, round(target)),
+                    language=req.get("language", "français"),
+                    rate=req.get("rate", tts.DEFAULT_RATE),
+                )
+                speech, script = _fit_dialogue(turns, req, target, work)
+            else:
+                # The topic panel asks for an initial draft sized to the requested
+                # duration; regenerate it here (otherwise the fitting loop inherits
+                # a script built for a different duration and cannot converge).
+                script = script_writer.write_script(
+                    req.get("topic", ""),
+                    duration=max(1, round(target)),
+                    language=req.get("language", "français"),
+                    style=req.get("style", ""),
+                    tone=req.get("tone", ""),
+                    rate=req.get("rate", tts.DEFAULT_RATE),
+                )
+                # Fit the narration to the requested duration (max 3 TTS passes);
+                # a user-supplied text is respected as-is.
+                speech, script = _fit_speech(script, req, target, work)
             (work / "script.json").write_text(
-                json.dumps({"topic": req.get("topic", ""), "script": script},
+                json.dumps({"topic": req.get("topic", ""), "script": script,
+                            "dialogue": dialogue_mode},
                            ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+        elif dialogue_mode and turns:
+            speech = tts.synthesize_dialogue(
+                _cast_dialogue(turns, req.get("voice", tts.DEFAULT_VOICE),
+                               req.get("dialogue_cast")),
+                work / "voice.mp3",
+                rate=req.get("rate", tts.DEFAULT_RATE),
+            )
+
+        speakers = list(getattr(speech, "speakers", None) or []) if speech else []
 
         generate(
             text=script,
@@ -281,7 +372,20 @@ def produce(job_id: str, req: dict) -> None:
             info_out=work,
             speech=speech,
             target_duration=target,
+            speakers=speakers,
+            music_enabled=bool(req.get("music", True)),
+            music_mood=req.get("music_mood") or None,
         )
+
+        # Music report written by `generate`; absent when the bed was skipped.
+        music_meta = {}
+        music_file = work / "music.json"
+        if music_file.exists():
+            try:
+                music_meta = json.loads(music_file.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001 - diagnostics only
+                music_meta = {}
+
         # Intermediate artefacts required by the batch layout.
         visuals_meta = {}
         visuals_file = work / "visuals.json"
@@ -345,6 +449,11 @@ def produce(job_id: str, req: dict) -> None:
                 "visual_queries": visuals_meta.get("queries", []),
                 "visual_scene_origins": visuals_meta.get("scene_origins", []),
                 "visual_cache": visuals_meta.get("cache", {}),
+                "dialogue": dialogue_mode,
+                "speakers": speakers,
+                "voice_map": dict(getattr(speech, "voice_map", None) or {}) if speech else {},
+                "music_mood": music_meta.get("mood"),
+                "music_label": music_meta.get("label"),
             },
         )
     except Exception as exc:  # noqa: BLE001 - surface any failure to the client

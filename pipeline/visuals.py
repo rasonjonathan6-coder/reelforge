@@ -228,9 +228,18 @@ def _keywords(text: str, limit: int = 3) -> list[str]:
     return picked
 
 
+# A dialogue script labels each line with its character (`Léo: ...`). Those
+# names are not visual subjects, so they are stripped before keyword extraction.
+_SPEAKER_LABEL = re.compile(r"^\s*[\wÀ-ÿ'’ .-]{1,24}\s*[:\u2013\u2014-]\s*", re.M)
+
+
+def _narration(script: str) -> str:
+    return _SPEAKER_LABEL.sub("", script or "")
+
+
 def _scene_texts(script: str, count: int) -> list[str]:
     """Split the narration into `count` ordered chunks, one per scene."""
-    parts = [p.strip() for p in re.split(r"[.!?…]+", script or "") if p.strip()]
+    parts = [p.strip() for p in re.split(r"[.!?…\n]+", _narration(script)) if p.strip()]
     if not parts:
         return [""] * count
     buckets: list[list[str]] = [[] for _ in range(count)]
@@ -244,13 +253,20 @@ def _scene_count(duration: float) -> int:
 
 
 def scene_queries(topic: str, script: str, count: int) -> list[str]:
-    """One distinct, scene-derived search query per scene."""
+    """One distinct search query per scene, mixing the topic and the scene text.
+
+    Topic words keep the reel on subject even when a scene mentions an aside;
+    the scene's own words give consecutive scenes different footage.
+    """
     topic_words = _keywords(topic, 3)
     scenes = _scene_texts(script, count)
     queries: list[str] = []
     seen: set[str] = set()
     for index in range(count):
-        words = _keywords(scenes[index], 2) or topic_words or ["abstract background"]
+        scene_words = _keywords(scenes[index], 2)
+        words = (topic_words[:2] + scene_words)[:3]
+        if not words:
+            words = topic_words or ["abstract background"]
         modifier = VISUAL_MODIFIERS[index % len(VISUAL_MODIFIERS)]
         query = " ".join(words + [modifier]).strip()
         if query in seen:

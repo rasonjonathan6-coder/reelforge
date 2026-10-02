@@ -29,7 +29,7 @@ from config import (
     WORKER_COUNT,
 )
 from jobs import CLIP_SUFFIXES, OUTPUT_DIR, Job, load, produce, save
-from pipeline import script_writer, stock_cache, tts, visuals
+from pipeline import music, script_writer, stock_cache, tts, visuals
 
 
 @asynccontextmanager
@@ -56,6 +56,8 @@ class GenerateRequest(BaseModel):
     text: str = ""
     topic: str = ""
     auto_script: bool = False
+    dialogue: bool = False
+    dialogue_cast: str = ""
     duration: int = Field(45, ge=15, le=90)
     language: str = "français"
     style: str = "storytelling"
@@ -64,6 +66,8 @@ class GenerateRequest(BaseModel):
     rate: str = tts.DEFAULT_RATE
     query: str = "city night vertical"
     use_stock: bool = True
+    music: bool = True
+    music_mood: str = ""
     logo: str = ""
     clips_dir: str = ""
 
@@ -71,6 +75,9 @@ class GenerateRequest(BaseModel):
 class ScriptRequest(BaseModel):
     topic: str = Field(..., min_length=3)
     duration: int = Field(45, ge=15, le=90)
+    dialogue: bool = False
+    dialogue_cast: str = ""
+    rate: str = tts.DEFAULT_RATE
 
 
 class BatchRequest(BaseModel):
@@ -83,6 +90,10 @@ class BatchRequest(BaseModel):
     rate: str = tts.DEFAULT_RATE
     query: str = "city night vertical"
     use_stock: bool = True
+    dialogue: bool = False
+    dialogue_cast: str = ""
+    music: bool = True
+    music_mood: str = ""
     logo: str = ""
     clips_dir: str = ""
 
@@ -101,9 +112,12 @@ def _dispatch(job_id: str, payload: dict) -> None:
 
 @app.post("/api/generate")
 def create_job(req: GenerateRequest) -> dict:
-    if not req.auto_script and len(req.text.strip()) < 20:
+    if req.dialogue:
+        if len(req.topic.strip()) < 3:
+            raise HTTPException(400, "Renseigne un sujet pour le dialogue automatique.")
+    elif not req.auto_script and len(req.text.strip()) < 20:
         raise HTTPException(400, "Fournis un texte (20 caractères min) ou active auto_script avec un sujet.")
-    if req.auto_script and len(req.topic.strip()) < 3:
+    if req.auto_script and not req.dialogue and len(req.topic.strip()) < 3:
         raise HTTPException(400, "Renseigne un sujet pour la génération automatique.")
 
     job_id = uuid.uuid4().hex[:12]
@@ -169,8 +183,14 @@ def get_job(job_id: str) -> dict:
 @app.post("/api/script")
 def generate_script(req: ScriptRequest) -> dict:
     try:
-        script = script_writer.write_script(req.topic, duration=req.duration)
-        return {"script": script}
+        if req.dialogue:
+            turns, script = script_writer.write_dialogue_script(
+                req.topic, duration=req.duration, rate=req.rate
+            )
+            return {"script": script, "dialogue": True,
+                    "speakers": script_writer.characters_of(turns)}
+        script = script_writer.write_script(req.topic, duration=req.duration, rate=req.rate)
+        return {"script": script, "dialogue": False}
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"Génération du script impossible : {exc}")
 
@@ -199,15 +219,15 @@ async def upload_clips(files: list[UploadFile] = File(...)) -> dict:
 
 @app.get("/api/voices")
 def voices() -> dict:
+    return {"voices": tts.VOICES}
+
+
+@app.get("/api/music")
+def music_moods() -> dict:
     return {
-        "voices": [
-            {"id": "fr-FR-DeniseNeural", "label": "Denise (femme, FR)"},
-            {"id": "fr-FR-HenriNeural", "label": "Henri (homme, FR)"},
-            {"id": "fr-FR-VivienneMultilingualNeural", "label": "Vivienne (femme, FR)"},
-            {"id": "fr-FR-RemyMultilingualNeural", "label": "Rémy (homme, FR)"},
-            {"id": "en-US-AriaNeural", "label": "Aria (femme, EN)"},
-            {"id": "en-US-GuyNeural", "label": "Guy (homme, EN)"},
-        ]
+        "moods": music.available_moods(),
+        "default": music.DEFAULT_MOOD,
+        "default_label": music.MOODS[music.DEFAULT_MOOD]["label"],
     }
 
 
