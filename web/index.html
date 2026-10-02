@@ -200,8 +200,18 @@
         <select id="character-style">
           <option value="anime" selected>Anime (2D)</option>
           <option value="cartoon_2d">Cartoon 2D</option>
-          <option value="cartoon_3d">Cartoon 3D</option>
+          <option value="cartoon_3d">Cartoon 3D — moteur 3D (personnage volumétrique)</option>
           <option value="stylized">Stylisé</option>
+        </select>
+      </div>
+      <div>
+        <label for="quality">Qualité 3D</label>
+        <select id="quality">
+          <option value="">Standard</option>
+          <option value="draft">Brouillon (rapide)</option>
+          <option value="cinematic">Cinématique</option>
+          <option value="photoreal">Photoréaliste (max)</option>
+          <option value="anime">Anime (couleurs vives)</option>
         </select>
       </div>
     </div>
@@ -230,8 +240,13 @@
         <label for="clips">Clips IA générés (Colab) — optionnel</label>
         <input id="clips" type="file" accept="video/*" multiple>
       </div>
+      <div>
+        <label for="characters">Références de personnages — optionnel</label>
+        <input id="characters" type="file" accept="image/*" multiple>
+      </div>
     </div>
     <div class="hint" id="clipsHint">Dépose ici des plans générés par IA (Wan, LTX…). Ils remplacent les visuels automatiques.</div>
+    <div class="hint">Références de personnages : une image par personnage, nommée d'après lui (<b>Léa.png</b>, <b>Tom.jpg</b>). Le personnage garde les couleurs et l'identité de l'image dans toutes les scènes — il n'est plus redessiné à chaque plan.</div>
 
     <button class="primary" id="go">Générer ma vidéo</button>
     <div class="free">Aucune inscription, aucune limite. <b>Gratuit pour toujours</b> — script (LLM gratuit), voix (edge-tts), visuels et montage (FFmpeg) tournent côté serveur, sans coût par vidéo.</div>
@@ -729,8 +744,22 @@ async function generate(){
     music_mood: $('music-mood').value,
     logo: ($('logo').value || '').trim(),
     animated_characters: $('video-type').value === 'animated',
-    character_style: $('character-style').value
+    character_style: $('character-style').value,
+    quality: $('quality').value
   };
+
+  // Character reference images pin each character's identity for the whole reel.
+  const charFiles = $('characters').files;
+  if(charFiles && charFiles.length){
+    $('step').textContent = 'Envoi des références…';
+    try{
+      const fd = new FormData();
+      for(const f of charFiles) fd.append('files', f);
+      const up = await fetch('/api/upload-character',{method:'POST',body:fd});
+      if(!up.ok) throw new Error((await up.json()).detail || 'Upload impossible');
+      body.characters_dir = (await up.json()).characters_dir;
+    }catch(e){ fail(e.message); return; }
+  }
 
   // AI-generated clips take priority over every automatic visual source.
   const clipFiles = $('clips').files;

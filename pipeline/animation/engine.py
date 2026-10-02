@@ -164,6 +164,7 @@ def generate_animated_reel(
     environment: str = "",
     visual_style: str = "anime",
     provider_name: str | None = None,
+    quality: str = "",
     captions: Path | None = None,
     fonts_dir: Path | None = None,
     audio_path: Path | None = None,
@@ -177,7 +178,7 @@ def generate_animated_reel(
     `ALLOW_STATIC_FALLBACK` is not `true`, the failure is raised as
     `AnimationFailed` instead of being hidden behind a still image.
     """
-    provider = AnimationProviderFactory.create(provider_name)
+    provider = AnimationProviderFactory.create(provider_name, preset=quality)
     work_dir.mkdir(parents=True, exist_ok=True)
     duration = float(target_duration or getattr(speech, "duration", 0.0) or 1.0)
     scenes = breakdown(lines, duration, voices=voice_map or {}, environment=environment)

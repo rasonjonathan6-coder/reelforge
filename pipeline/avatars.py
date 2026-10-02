@@ -47,13 +47,92 @@ PALETTES = [
 
 
 def palette_for(name: str) -> dict:
-    """Stable anime palette per speaker; a known character keeps its colours."""
+    """Stable anime palette per speaker; a known character keeps its colours.
+
+    A reference image registered with `load_reference` wins over everything:
+    the character then keeps the colours of the picture the user supplied.
+    """
     from pipeline import script_understanding
+
+    reference = _REFERENCES.get(_key(name))
+    if reference:
+        return dict(reference)
 
     skin, hair, outfit, eye = PALETTES[sum(ord(c) for c in (name or "?")) % len(PALETTES)]
     signature = script_understanding.signature_look(name)
     if signature:
         hair, outfit, eye = signature
+    return {"skin": skin, "hair": hair, "outfit": outfit, "eye": eye}
+
+
+# ---------------------------------------------------------------------------
+# Character reference images
+#
+# A user-supplied portrait is turned into the palette the engines paint the
+# character with, so every scene keeps one consistent identity instead of the
+# character being redesigned scene by scene. The registry is process-global on
+# purpose (one worker renders one job at a time) and cleared after each job.
+# ---------------------------------------------------------------------------
+_REFERENCES: dict[str, dict] = {}
+
+
+def _key(name: str) -> str:
+    return (name or "").strip().lower()
+
+
+def clear_references() -> None:
+    _REFERENCES.clear()
+
+
+def load_reference(name: str, image_path) -> dict:
+    """Register `image_path` as the look of `name`; returns the extracted palette."""
+    palette = palette_from_image(image_path, name)
+    _REFERENCES[_key(name)] = palette
+    return palette
+
+
+def _average(img: Image.Image, box) -> tuple[int, int, int]:
+    region = img.crop(box)
+    if region.width < 1 or region.height < 1:
+        return (0, 0, 0)
+    # A 1x1 box filter is the average colour, computed by Pillow itself.
+    return region.convert("RGB").resize((1, 1), Image.BOX).getpixel((0, 0))
+
+
+def palette_from_image(image_path, name: str = "") -> dict:
+    """Sample skin/hair/outfit/eye colours from a portrait.
+
+    The bands are proportional (hair at the top, face in the upper middle,
+    outfit lower down) which holds for the usual head-and-shoulders framing.
+    Colours are quantised so the flat-shaded engines get stable values.
+    """
+    with Image.open(image_path) as raw:
+        img = raw.convert("RGB")
+    w, h = img.size
+    if w < 8 or h < 8:
+        return palette_for_fallback(name)
+
+    hair = _average(img, (int(w * 0.20), 0, int(w * 0.80), int(h * 0.12)))
+    skin = _average(img, (int(w * 0.34), int(h * 0.30), int(w * 0.66), int(h * 0.52)))
+    outfit = _average(img, (int(w * 0.28), int(h * 0.78), int(w * 0.72), int(h * 0.98)))
+    # The iris: the darker part of the eye band, which avoids the sclera.
+    eyes = img.crop((int(w * 0.30), int(h * 0.28), int(w * 0.70), int(h * 0.40)))
+    small = eyes.convert("RGB").resize((8, 4), Image.BOX)
+    samples = [small.getpixel((x, y)) for y in range(4) for x in range(8)]
+    samples.sort(key=sum)
+    picked = samples[:max(1, len(samples) // 4)]
+    eye = tuple(sum(p[i] for p in picked) // len(picked) for i in range(3))
+
+    def boost(color, floor=90):
+        return tuple(max(floor, min(255, int(c))) for c in color)
+
+    return {"skin": boost(skin, 120), "hair": boost(hair, 20),
+            "outfit": boost(outfit, 30), "eye": boost(eye, 60)}
+
+
+def palette_for_fallback(name: str) -> dict:
+    """The deterministic palette, ignoring any registered reference."""
+    skin, hair, outfit, eye = PALETTES[sum(ord(c) for c in (name or "?")) % len(PALETTES)]
     return {"skin": skin, "hair": hair, "outfit": outfit, "eye": eye}
 
 

@@ -71,6 +71,17 @@ def test_animated_flags_travel_from_request_to_generate(captured):
     assert captured["animation_provider"] == "local"
 
 
+def test_3d_style_selects_the_software_3d_provider():
+    """`cartoon_3d` must route to `local3d`; other styles stay on the 2D engine."""
+    from generate import _resolve_provider
+
+    assert _resolve_provider("cartoon_3d", None) == "local3d"
+    assert _resolve_provider("anime", None) is None
+    assert _resolve_provider("cartoon_2d", None) is None
+    # An explicit provider always wins over the style default.
+    assert _resolve_provider("cartoon_3d", "local") == "local"
+
+
 def test_defaults_keep_the_existing_stock_mode(captured):
     jobs.produce("stock1", {
         "text": "Un texte de narration classique pour la vidéo faceless.",

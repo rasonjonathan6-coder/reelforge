@@ -188,6 +188,30 @@ def _fit_speech(text: str, req: dict, target: float, work: Path, attempts: int =
     return best_speech, best_text
 
 
+def _load_character_references(folder: str | None) -> None:
+    """Register every reference image in `folder` as a character look.
+
+    Images are named after the character (`Léa.png`, `Tom.jpg`); the pipeline
+    then paints that character with the colours sampled from the picture. The
+    registry is cleared first so a job never inherits a previous job's look.
+    """
+    from pipeline import avatars
+
+    avatars.clear_references()
+    if not folder:
+        return
+    base = Path(folder)
+    if not base.is_dir():
+        return
+    for image in sorted(base.iterdir()):
+        if image.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+            continue
+        try:
+            avatars.load_reference(image.stem, image)
+        except Exception:  # noqa: BLE001 - a bad image must not kill the job
+            continue
+
+
 def _dialogue_characters(turns: list) -> list[str]:
     """Character names in first-appearance order (all of them)."""
     return script_writer.characters_of(turns)
@@ -358,6 +382,8 @@ def produce(job_id: str, req: dict) -> None:
 
         speakers = list(getattr(speech, "speakers", None) or []) if speech else []
 
+        _load_character_references(req.get("characters_dir"))
+
         generate(
             text=script,
             out_path=video_path,
@@ -379,6 +405,7 @@ def produce(job_id: str, req: dict) -> None:
             animated_characters=bool(req.get("animated_characters")),
             character_style=req.get("character_style") or "anime",
             animation_provider=req.get("animation_provider") or None,
+            quality=req.get("quality") or "",
         )
 
         # Music report written by `generate`; absent when the bed was skipped.

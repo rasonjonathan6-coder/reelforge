@@ -225,6 +225,37 @@ def _place_character(frame: Image.Image, char: Image.Image, scale: float,
 
 
 # ---------------------------------------------------------------------------
+# 3D provider — the software 3D engine (volumetric characters, real camera)
+# ---------------------------------------------------------------------------
+class Local3DAnimationProvider(AnimationProvider):
+    """Render every frame with the software 3D engine (pure Python rasteriser).
+
+    Unlike `LocalAnimationProvider` (a 2D drawing composited over a backdrop),
+    this builds a 3D scene graph, rigs the character with a skeleton and
+    projects it through a perspective camera, so the character is volumetric
+    and the camera really orbits it.
+    """
+
+    name = "local3d"
+
+    def __init__(self, preset: str = ""):
+        self.preset = (preset or os.environ.get("REELFORGE_3D_PRESET", "")).strip().lower()
+
+    def generate_scene(self, character, scene, spans, work_dir: Path) -> ProviderOutput:
+        from .render3d import RenderSettings, render_scene_3d
+
+        settings = RenderSettings.from_env()
+        if self.preset:
+            settings = RenderSettings.preset(self.preset)
+        out = work_dir / f"scene_{scene.scene_id:02d}_3d.mp4"
+        meta = render_scene_3d(character, scene, spans, out, settings=settings)
+        return ProviderOutput(
+            video_path=out, duration=max(0.5, float(scene.duration)),
+            width=WIDTH, height=HEIGHT, provider=self.name, metadata=meta,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Remote provider — plug an external service without touching the pipeline
 # ---------------------------------------------------------------------------
 class RemoteAnimationProvider(AnimationProvider):
@@ -266,12 +297,18 @@ class RemoteAnimationProvider(AnimationProvider):
 class AnimationProviderFactory:
     """Build a provider from an explicit name or `ANIMATION_PROVIDER`."""
 
-    _REGISTRY = {"local": LocalAnimationProvider, "remote": RemoteAnimationProvider}
+    _REGISTRY = {
+        "local": LocalAnimationProvider,
+        "local3d": Local3DAnimationProvider,
+        "remote": RemoteAnimationProvider,
+    }
 
     @classmethod
-    def create(cls, name: str | None = None) -> AnimationProvider:
+    def create(cls, name: str | None = None, preset: str = "") -> AnimationProvider:
         key = (name or os.environ.get("ANIMATION_PROVIDER", "local")).strip().lower()
         provider_cls = cls._REGISTRY.get(key)
         if provider_cls is None:
             raise ValueError(f"Unknown ANIMATION_PROVIDER: {key!r} (have {sorted(cls._REGISTRY)})")
+        if provider_cls is Local3DAnimationProvider:
+            return provider_cls(preset=preset)
         return provider_cls()

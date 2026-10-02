@@ -73,6 +73,8 @@ class GenerateRequest(BaseModel):
     animated_characters: bool = False
     character_style: str = "anime"
     animation_provider: str = ""
+    quality: str = ""
+    characters_dir: str = ""
 
 
 class ScriptRequest(BaseModel):
@@ -218,6 +220,36 @@ async def upload_clips(files: list[UploadFile] = File(...)) -> dict:
             400, f"Aucun clip valide. Formats acceptés : {', '.join(sorted(CLIP_SUFFIXES))}"
         )
     return {"clips_dir": str(folder), "clips": saved, "count": len(saved)}
+
+
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+CHARACTERS_DIR = OUTPUT_DIR / "characters"
+
+
+@app.post("/api/upload-character")
+async def upload_character(files: list[UploadFile] = File(...)) -> dict:
+    """Store character reference images and return how each one maps to a name.
+
+    The filename (minus extension) is the character name; the job then paints
+    that character with the colours sampled from the picture.
+    """
+    folder = CHARACTERS_DIR / uuid.uuid4().hex[:12]
+    folder.mkdir(parents=True, exist_ok=True)
+    saved: list[dict] = []
+    for upload in files:
+        name = Path(upload.filename or "character.png").name
+        if Path(name).suffix.lower() not in IMAGE_SUFFIXES:
+            continue
+        dest = folder / name
+        with open(dest, "wb") as handle:
+            shutil.copyfileobj(upload.file, handle)
+        saved.append({"name": Path(name).stem, "path": str(dest)})
+    if not saved:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(
+            400, f"Aucune image valide. Formats acceptés : {', '.join(sorted(IMAGE_SUFFIXES))}"
+        )
+    return {"characters_dir": str(folder), "characters": saved, "count": len(saved)}
 
 
 @app.get("/api/voices")

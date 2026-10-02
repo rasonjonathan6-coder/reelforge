@@ -129,10 +129,25 @@ def _dialogue_lines(text: str, speech) -> list[tuple[str, str]]:
     return lines
 
 
+def _resolve_provider(character_style: str, animation_provider: str | None) -> str | None:
+    """An explicit provider wins; otherwise the 3D style selects the 3D engine.
+
+    `cartoon_3d` maps to the software 3D renderer (volumetric character, real
+    camera). Every other style keeps the 2D drawing engine. `None` lets the
+    engine fall back to `ANIMATION_PROVIDER`.
+    """
+    if animation_provider:
+        return animation_provider
+    if (character_style or "").strip().lower() == "cartoon_3d":
+        return "local3d"
+    return None
+
+
 def _generate_animated(speech, text, out_path, tmp, info_out, duration, *,
                        character_style="anime", animation_provider=None,
-                       music_enabled=True, music_mood=None, logo_text=None,
-                       topic="", speakers=None, on_step=None) -> Path:
+                       quality="", music_enabled=True, music_mood=None,
+                       logo_text=None, topic="", speakers=None,
+                       on_step=None) -> Path:
     """Real animated-character reel: every scene is drawn frame by frame.
 
     Captions, the progress bar/logo, the voice-over and the music bed are all
@@ -164,7 +179,9 @@ def _generate_animated(speech, text, out_path, tmp, info_out, duration, *,
         speech, lines, out_path, tmp / "animation",
         target_duration=duration, voice_map=voices,
         environment=script_understanding.detect_place(text),
-        visual_style=character_style, provider_name=animation_provider,
+        visual_style=character_style,
+        provider_name=_resolve_provider(character_style, animation_provider),
+        quality=quality,
         captions=ass, audio_path=speech.audio_path, music_bed=music_bed,
         logo_text=logo_text, on_step=on_step,
     )
@@ -204,6 +221,7 @@ def generate(
     animated_characters: bool = False,
     character_style: str = "anime",
     animation_provider: str | None = None,
+    quality: str = "",
 ) -> Path:
     """Render one reel.
 
@@ -246,6 +264,7 @@ def generate(
         return _generate_animated(
             speech, text, out_path, tmp, info_out, duration,
             character_style=character_style, animation_provider=animation_provider,
+            quality=quality,
             music_enabled=music_enabled, music_mood=music_mood,
             logo_text=logo_text, topic=topic, speakers=speakers, on_step=report,
         )
@@ -469,8 +488,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--animation-provider", default="",
-        choices=["", "local", "remote"],
-        help="Animation backend; 'local' is the free CPU engine (default)",
+        choices=["", "local", "local3d", "remote"],
+        help="Animation backend; 'local' is the free CPU 2D engine, 'local3d' the "
+             "software 3D engine (default: auto — cartoon_3d style picks local3d)",
+    )
+    parser.add_argument(
+        "--character-references", type=Path, default=None,
+        help="Folder of character portrait images (named after the speaker, e.g. "
+             "Lea.png) whose colours the animated character keeps.",
+    )
+    parser.add_argument(
+        "--quality", default="",
+        choices=["", "draft", "standard", "cinematic", "photoreal", "anime"],
+        help="3D render quality preset (local3d only): draft is fast, "
+             "photoreal/cinematic enable supersampling, motion blur, bloom and "
+             "film grain (default: standard, or REELFORGE_3D_PRESET)",
     )
     # Dialogue / monologue (same behaviour as the API's `dialogue` field).
     parser.add_argument(
@@ -546,6 +578,16 @@ def main() -> None:
     work = None if args.keep_work else None
     speakers = None
     speech = None
+    if args.character_references:
+        from pipeline import avatars
+
+        avatars.clear_references()
+        for image in sorted(args.character_references.iterdir()):
+            if image.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+                try:
+                    avatars.load_reference(image.stem, image)
+                except Exception:  # noqa: BLE001 - a bad image must not kill the run
+                    continue
     if args.dialogue:
         # Dialogue needs the voice-over before `generate` so the per-character
         # captions and the cast are known up front.
@@ -574,6 +616,7 @@ def main() -> None:
         animated_characters=args.animated_characters,
         character_style=args.character_style,
         animation_provider=args.animation_provider or None,
+        quality=args.quality,
     )
 
 
