@@ -32,6 +32,17 @@ WORKER_COUNT = int(os.environ.get("WORKER_COUNT", "2"))
 MAX_BATCH_SIZE = int(os.environ.get("MAX_BATCH_SIZE", "20"))
 MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "2"))
 
+# Output geometry. Lower these on small hosts: 1080x1920 at 30fps is what
+# OOM-kills a 512 MB Render free instance during the final compose.
+VIDEO_WIDTH = int(os.environ.get("VIDEO_WIDTH", "1080"))
+VIDEO_HEIGHT = int(os.environ.get("VIDEO_HEIGHT", "1920"))
+VIDEO_FPS = int(os.environ.get("VIDEO_FPS", "30"))
+
+# FFmpeg pressure knobs. threads=1 keeps a single encode inside the memory
+# budget of a free instance; raise it when the host has real CPU and RAM.
+FFMPEG_THREADS = int(os.environ.get("FFMPEG_THREADS", "1"))  # 1 keeps a single encode in RAM
+FFMPEG_PRESET = os.environ.get("FFMPEG_PRESET", "veryfast")
+
 # Storage: "local" disk or "s3" (any S3-compatible endpoint: AWS, R2, MinIO...).
 STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND", "local")
 S3_BUCKET = os.environ.get("S3_BUCKET", "")

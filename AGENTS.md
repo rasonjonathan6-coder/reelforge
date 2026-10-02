@@ -103,6 +103,24 @@ an mp4 + a JSON sidecar (provider url/id, width/height/duration, timestamps).
 - Tests isolate the cache via `tests/conftest.py`; never let a test touch the
   real `data/cache/`.
 
+## Render free tier (512 MB) - keep the encode inside the budget
+`render.yaml` is the source of truth for the deployment limits:
+- `WORKER_COUNT=1` / `MAX_CONCURRENT_JOBS=1` - one render at a time. Two
+  parallel FFmpeg jobs are what OOM-kill the instance.
+- `VIDEO_WIDTH=720` / `VIDEO_HEIGHT=1280` - half the pixels of 1080x1920.
+  Raise to 1080x1920 only on a paid instance.
+- `FFMPEG_THREADS=1`, `FFMPEG_PRESET=veryfast` - minimum x264 footprint.
+All geometry lives in `config.py`; `visuals`, `compose`, `ai_images`,
+`overlay`, `thumbnail` and `subtitles` (PlayRes) import it, so subtitles stay
+aligned with whatever resolution is rendered.
+- Jobs live in process memory under `QUEUE_BACKEND=local`. An OOM restart
+  wipes them and `/api/jobs/<id>` starts returning 404 - the UI turns that
+  into an explicit "server restarted, relaunch" message rather than a raw
+  JSON parse error. Persisting jobs needs `QUEUE_BACKEND=celery` + Redis.
+- The browser reads every response body through `readJson()` in
+  `web/index.html`, which surfaces the HTTP status instead of throwing
+  "Unexpected end of JSON input" on an HTML error page.
+
 ## Free AI images (`pipeline/ai_images.py`) — the in-site default
 No GPU, no key, no account: Pollinations (`https://image.pollinations.ai`)
 returns a real generated image per scene, which `image_to_clip()` turns into

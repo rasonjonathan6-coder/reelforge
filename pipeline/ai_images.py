@@ -23,8 +23,10 @@ import requests
 
 from pipeline import video_prompts
 
-WIDTH, HEIGHT = 1080, 1920
-FPS = 30
+from config import FFMPEG_THREADS, VIDEO_FPS, VIDEO_HEIGHT, VIDEO_WIDTH
+
+WIDTH, HEIGHT = VIDEO_WIDTH, VIDEO_HEIGHT
+FPS = VIDEO_FPS
 ZOOM_PER_SECOND = 0.03
 ZOOM_MAX = 1.12
 SCENE_SECONDS = 4.0
@@ -95,7 +97,7 @@ def image_to_clip(image: Path, out_path: Path, seconds: float,
         f"{GRAIN},format=yuv420p"
     )
     _run([
-        "ffmpeg", "-y", "-loglevel", "error",
+        "ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS),
         "-loop", "1", "-i", str(image),
         "-t", f"{seconds:.3f}", "-vf", vf, "-an",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",

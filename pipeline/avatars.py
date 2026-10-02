@@ -22,8 +22,10 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from config import FFMPEG_THREADS, VIDEO_FPS
+
 W, H = 600, 820
-FPS = 30
+FPS = VIDEO_FPS
 _FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 OUTLINE = (28, 24, 34)
 HEAD = (300, 300)
@@ -362,7 +364,7 @@ def render_character(
     frames = max(1, int(round(duration * fps)))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     proc = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error",
+        ["ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS),
          "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{W}x{H}",
          "-r", str(fps), "-i", "-", "-c:v", "qtrle", "-pix_fmt", "rgba",
          str(out_path)],

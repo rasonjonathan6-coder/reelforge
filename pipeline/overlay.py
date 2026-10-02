@@ -12,7 +12,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
-WIDTH, HEIGHT = 1080, 1920
+from config import FFMPEG_PRESET, FFMPEG_THREADS, VIDEO_HEIGHT, VIDEO_WIDTH
+
+WIDTH, HEIGHT = VIDEO_WIDTH, VIDEO_HEIGHT
 BAR_HEIGHT = 12
 BAR_COLOR = "0x00E5FF"  # matches the caption highlight (orange-yellow in BGR)
 
@@ -62,10 +64,10 @@ def add_overlay(
 
     subprocess.run(
         [
-            "ffmpeg", "-y", "-loglevel", "error",
+            "ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS),
             "-i", str(video),
             "-vf", ",".join(filters),
-            "-c:v", "libx264", "-preset", "medium", "-crf", "21",
+            "-c:v", "libx264", "-preset", FFMPEG_PRESET, "-crf", "21",
             "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
             "-c:a", "copy",
             "-movflags", "+faststart",

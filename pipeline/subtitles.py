@@ -12,7 +12,9 @@ from pathlib import Path
 
 from pipeline.tts import WordTiming
 
-PLAY_RES = (1080, 1920)
+from config import VIDEO_HEIGHT, VIDEO_WIDTH
+
+PLAY_RES = (VIDEO_WIDTH, VIDEO_HEIGHT)
 FONT = "DejaVu Sans"
 FONT_SIZE = 96
 HIGHLIGHT = "&H0000E5FF"  # BGR: orange-yellow

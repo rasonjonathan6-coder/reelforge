@@ -114,6 +114,11 @@ Sans `S3_PUBLIC_BASE_URL`, l'API renvoie une URL présignée (7 jours).
 | `QUEUE_BACKEND` | `local` | `local` ou `celery` |
 | `REDIS_URL` | `redis://localhost:6379/0` | broker Celery |
 | `WORKER_COUNT` | `2` | workers du pool local |
+| `MAX_CONCURRENT_JOBS` | `2` | rendus simultanés maximum |
+| `VIDEO_WIDTH` / `VIDEO_HEIGHT` | `1080` / `1920` | géométrie de sortie ; baissez sur une petite machine |
+| `VIDEO_FPS` | `30` | images par seconde |
+| `FFMPEG_PRESET` | `veryfast` | compromis vitesse/qualité x264 |
+| `FFMPEG_THREADS` | `1` | threads x264 par encodage (1 = empreinte RAM minimale) |
 | `STORAGE_BACKEND` | `local` | `local` ou `s3` |
 | `S3_BUCKET`, `S3_PREFIX`, `S3_ENDPOINT_URL`, `S3_REGION` | — | stockage objet |
 | `S3_PUBLIC_BASE_URL` | — | base CDN pour liens directs |
@@ -281,6 +286,13 @@ uniquement par la variable d'environnement du service.
 Sur **Render** : `render.yaml` décrit le service (runtime Docker, plan free,
 `NVIDIA_API_KEY` à saisir dans le dashboard). Sur **Fly.io / Railway / VPS** :
 même image, la variable `PORT` est respectée.
+
+⚠️ **Le plan gratuit Render (512 Mo) ne tient pas le 1080×1920.** Deux rendus
+simultanés (ou un seul montage final en 1080×1920) déclenchent l'OOM killer :
+le conteneur redémarre, le job disparaît (stocké en mémoire) et l'interface
+affiche une erreur de parsing JSON. `render.yaml` configure donc `WORKER_COUNT=1`,
+`MAX_CONCURRENT_JOBS=1`, `VIDEO_WIDTH/HEIGHT=720x1280`, `FFMPEG_THREADS=1` et
+`FFMPEG_PRESET=veryfast`. Remettez 1080×1920 sur une instance payante.
 
 ⚠️ Sur les hébergeurs à disque éphémère (Render free, Fly sans volume), les
 vidéos de `output/` **et le cache de clips** disparaissent au redémarrage. Pour

@@ -5,12 +5,17 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-WIDTH, HEIGHT = 1080, 1920
-FPS = 30
+from config import FFMPEG_PRESET, FFMPEG_THREADS, VIDEO_FPS, VIDEO_HEIGHT, VIDEO_WIDTH
+
+WIDTH, HEIGHT = VIDEO_WIDTH, VIDEO_HEIGHT
+FPS = VIDEO_FPS
 
 # Characters stand above the caption band (captions sit ~420px from the bottom).
 AVATAR_RATIO = 860 / 520
-CAPTION_TOP = 1160
+# Top of the caption band, as a fraction of the frame. Proportional so the
+# avatars stay above the captions when the output resolution is lowered.
+CAPTION_TOP_RATIO = 1160 / 1920
+CAPTION_TOP = int(HEIGHT * CAPTION_TOP_RATIO)
 
 
 def _run(cmd: list[str]) -> None:
@@ -74,12 +79,12 @@ def compose(
         chain += f",{_ass_filter(ass)}[v]"
 
     _run([
-        "ffmpeg", "-y", "-loglevel", "error",
+        "ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS),
         *inputs,
         "-filter_complex", chain,
         "-map", "[v]", "-map", "1:a",
         "-t", f"{duration:.3f}",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "21",
+        "-c:v", "libx264", "-preset", FFMPEG_PRESET, "-crf", "21",
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
         "-c:a", "aac", "-b:a", "192k", "-ar", "44100",
         "-movflags", "+faststart", "-shortest",

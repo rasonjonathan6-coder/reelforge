@@ -447,13 +447,21 @@
 
 <script>
 const $ = id => document.getElementById(id);
+/* Read a JSON body defensively: a restarted or crashed server answers with an
+   HTML error page, and Response.json() then throws "Unexpected end of JSON
+   input" - an unhelpful dead end. Surface the real cause instead. */
+async function readJson(r){
+  const txt = await r.text();
+  try { return JSON.parse(txt); }
+  catch { throw new Error(r.status ? ('Serveur indisponible (HTTP '+r.status+') - reessayez dans un instant') : 'Reponse serveur illisible'); }
+}
 let timer = null;
 let btimer = null;
 let cfg = {max_batch_size: 20, max_concurrent_jobs: 2};
 
 async function loadVoices(){
   try{
-    const r = await fetch('/api/voices'); const d = await r.json();
+    const r = await fetch('/api/voices'); const d = await readJson(r);
     const opts = d.voices.map(v=>`<option value="${v.id}">${v.label}</option>`).join('');
     $('voice').innerHTML = opts;
     $('b-voice').innerHTML = opts;
@@ -464,7 +472,7 @@ async function loadVoices(){
 }
 async function loadMusic(){
   try{
-    const r = await fetch('/api/music'); const d = await r.json();
+    const r = await fetch('/api/music'); const d = await readJson(r);
     const moods = d.moods || [];
     const opts = moods.map(m=>`<option value="${m.id}">${m.label}</option>`).join('');
     $('music-mood').innerHTML = `<option value="">Auto (${escapeHtml(d.default_label||'selon le script')})</option>` + opts;
@@ -478,7 +486,7 @@ loadMusic();
 
 async function loadConfig(){
   try{
-    const r = await fetch('/api/config'); cfg = await r.json();
+    const r = await fetch('/api/config'); cfg = await readJson(r);
   }catch(e){}
   $('batch-limit').textContent =
     `Limite : ${cfg.max_batch_size} vidéos par lot · ${cfg.max_concurrent_jobs} en parallèle maximum.`;
@@ -598,8 +606,8 @@ async function launchBatch(){
   let batchId;
   try{
     const r = await fetch('/api/batch-generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!r.ok) throw new Error((await r.json()).detail || ('Erreur '+r.status));
-    batchId = (await r.json()).batch_id;
+    if(!r.ok) throw new Error((await readJson(r)).detail || ('Erreur '+r.status));
+    batchId = (await readJson(r)).batch_id;
   }catch(e){ btn.disabled=false; bPill('err','Échec'); setBatchStep(e.message); return; }
 
   $('batch-id').textContent = '#' + batchId;
@@ -608,7 +616,7 @@ async function launchBatch(){
   clearInterval(btimer);
   btimer = setInterval(async ()=>{
     try{
-      const r = await fetch('/api/batch/'+batchId); const b = await r.json();
+      const r = await fetch('/api/batch/'+batchId); const b = await readJson(r);
       renderBatch(batchId, b);
       const done = b.counts.completed + b.counts.failed;
       $('bbar').style.width = Math.max(3, Math.round(done / b.total * 100)) + '%';
@@ -725,8 +733,8 @@ $('gen-script').addEventListener('click', async ()=>{
       body: JSON.stringify({topic, duration: parseInt($('duration').value),
         dialogue: $('dialogue').checked, rate: $('rate').value,
         dialogue_cast: $('dialogue-cast') ? $('dialogue-cast').value : ''})});
-    if(!r.ok) throw new Error((await r.json()).detail || 'Erreur');
-    $('text-topic').value = (await r.json()).script;
+    if(!r.ok) throw new Error((await readJson(r)).detail || 'Erreur');
+    $('text-topic').value = (await readJson(r)).script;
     delete $('text-topic').dataset.edited;
   }catch(e){ alert('Script impossible : '+e.message); }
   finally{ btn.disabled = false; btn.textContent = 'Générer le script'; }
@@ -749,8 +757,8 @@ $('make-prompts').addEventListener('click', async ()=>{
       body: JSON.stringify({topic, script, duration: parseInt($('duration').value),
         dialogue: $('dialogue').checked, rate: $('rate').value,
         dialogue_cast: $('dialogue-cast') ? $('dialogue-cast').value : ''})});
-    if(!r.ok) throw new Error((await r.json()).detail || 'Erreur');
-    const data = await r.json();
+    if(!r.ok) throw new Error((await readJson(r)).detail || 'Erreur');
+    const data = await readJson(r);
     $('prompts-out').value = JSON.stringify(data, null, 2);
     $('prompts-hint').innerHTML = `${data.count} prompt(s) prêt(s) pour <b>${escapeHtml(data.settings.model)}</b>. `+
       `Colle ce JSON dans la cellule 3 de <b>${escapeHtml(data.notebook)}</b>.`;
@@ -835,15 +843,23 @@ async function generate(){
   let jobId;
   try{
     const r = await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!r.ok) throw new Error((await r.json()).detail || ('Erreur '+r.status));
-    jobId = (await r.json()).job_id;
+    if(!r.ok) throw new Error((await readJson(r)).detail || ('Erreur '+r.status));
+    jobId = (await readJson(r)).job_id;
   }catch(e){ fail(e.message); return; }
 
   clearInterval(timer);
   const startedAt = Date.now();
+  let misses = 0;
   timer = setInterval(async ()=>{
     try{
-      const r = await fetch('/api/jobs/'+jobId); const j = await r.json();
+      const r = await fetch('/api/jobs/'+jobId);
+      if(r.status === 404){
+        clearInterval(timer); $('go').disabled=false;
+        return fail('Le serveur a redemarre pendant la generation (memoire du plan gratuit) : la video est perdue. Relancez.');
+      }
+      if(!r.ok){ if(++misses > 20){ clearInterval(timer); $('go').disabled=false; return fail('Serveur inaccessible (HTTP '+r.status+').'); } return; }
+      misses = 0;
+      const j = await readJson(r);
       $('bar').style.width = Math.max(2, j.progress)+'%';
       const elapsed = Math.round((Date.now()-startedAt)/1000);
       const mm = String(Math.floor(elapsed/60)).padStart(2,'0');

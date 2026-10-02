@@ -23,11 +23,18 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from config import PEXELS_CACHE_TTL_DAYS
+from config import (
+    FFMPEG_PRESET,
+    FFMPEG_THREADS,
+    PEXELS_CACHE_TTL_DAYS,
+    VIDEO_FPS,
+    VIDEO_HEIGHT,
+    VIDEO_WIDTH,
+)
 from pipeline import ai_images, stock_cache
 
-WIDTH, HEIGHT = 1080, 1920
-FPS = 30
+WIDTH, HEIGHT = VIDEO_WIDTH, VIDEO_HEIGHT
+FPS = VIDEO_FPS
 
 # The pipeline always prefers a portrait rendition, so that is the orientation
 # a request is keyed on. The rendition actually picked may still be landscape
@@ -147,7 +154,7 @@ def _join_xfade_timed(segments: list[Path], weights: list[float], duration: floa
     """
     if len(segments) == 1:
         _run([
-            "ffmpeg", "-y", "-loglevel", "error", "-i", str(segments[0]),
+            "ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS), "-i", str(segments[0]),
             "-t", f"{duration:.3f}", "-c:v", "libx264", "-preset", "veryfast",
             "-crf", "22", "-pix_fmt", "yuv420p", str(out_path),
         ])
@@ -172,7 +179,7 @@ def _join_xfade_timed(segments: list[Path], weights: list[float], duration: floa
     filter_complex = ";".join(steps)
 
     _run([
-        "ffmpeg", "-y", "-loglevel", "error", *inputs,
+        "ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS), *inputs,
         "-filter_complex", filter_complex,
         "-map", prev,
         "-t", f"{duration:.3f}",
@@ -211,7 +218,7 @@ def generate_scenes(duration: float, out_path: Path, seed: int | None = None) ->
         )
         seg = seg_dir / f"scene_{index}.mp4"
         _run([
-            "ffmpeg", "-y", "-loglevel", "error",
+            "ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS),
             "-f", "lavfi", "-i", src,
             # Light blur only: a heavy blur flattens the colours into one another
             # and the moving gradient becomes invisible.
@@ -677,7 +684,7 @@ def _montage(clips: list[Path], duration: float, work_dir: Path, out_path: Path,
     for index, clip in enumerate(clips):
         seg = seg_dir / f"seg_{index}.mp4"
         _run([
-            "ffmpeg", "-y", "-loglevel", "error",
+            "ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS),
             "-stream_loop", "-1", "-i", str(clip),
             "-t", f"{slots[index]:.3f}",
             "-vf", _cover_filter(pan=pans[index]), "-an",

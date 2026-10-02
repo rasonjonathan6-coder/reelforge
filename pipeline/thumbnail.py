@@ -14,7 +14,9 @@ from urllib.parse import quote
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
-WIDTH, HEIGHT = 1080, 1920
+from config import VIDEO_HEIGHT, VIDEO_WIDTH
+
+WIDTH, HEIGHT = VIDEO_WIDTH, VIDEO_HEIGHT
 IMAGE_URL = "https://image.pollinations.ai"
 FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
@@ -55,7 +57,7 @@ def _download_background(prompt: str, dest: Path) -> Path | None:
 def _gradient_background(dest: Path) -> Path:
     src = f"gradients=s={WIDTH}x{HEIGHT}:c0=0x1a1a2e:c1=0x533483:c2=0x0f3460:nb_colors=3"
     _run([
-        "ffmpeg", "-y", "-loglevel", "error",
+        "ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS),
         "-f", "lavfi", "-i", src,
         "-vf", "gblur=sigma=30,format=rgb24",
         "-frames:v", "1", str(dest),

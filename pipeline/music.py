@@ -13,6 +13,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from config import FFMPEG_THREADS
+
 SAMPLE_RATE = 44100
 
 # How loud the bed sits under the voice. The sidechain stage drops it further
@@ -185,7 +187,7 @@ def generate(
         f"afade=t=out:st={fade_out_start:.2f}:d={min(FADE_OUT, duration / 3):.2f}",
     ]
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error",
+        ["ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS),
          "-f", "lavfi",
          "-i", f"aevalsrc='{expression}':s={SAMPLE_RATE}:d={duration:.3f}",
          "-af", ",".join(filters),
@@ -222,7 +224,7 @@ def mix_into_video(
         f"alimiter=limit=0.95[aout]"
     )
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error",
+        ["ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS),
          "-i", str(video), "-i", str(music),
          "-filter_complex", filter_complex,
          "-map", "0:v", "-map", "[aout]",

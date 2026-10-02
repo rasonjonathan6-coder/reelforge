@@ -9,5 +9,22 @@ services:
         sync: false
       - key: QUEUE_BACKEND
         value: local
+      # One encode at a time: two parallel FFmpeg jobs OOM-kill the 512 MB
+      # free instance and lose the whole in-memory job.
       - key: WORKER_COUNT
-        value: "2"
+        value: "1"
+      - key: MAX_CONCURRENT_JOBS
+        value: "1"
+      # 720x1280 instead of 1080x1920: ~half the pixels to encode, which is
+      # what makes a 30-60s reel finish on the free tier. Raise to 1080x1920
+      # on a paid instance.
+      - key: VIDEO_WIDTH
+        value: "720"
+      - key: VIDEO_HEIGHT
+        value: "1280"
+      - key: VIDEO_FPS
+        value: "30"
+      - key: FFMPEG_PRESET
+        value: veryfast
+      - key: FFMPEG_THREADS
+        value: "1"

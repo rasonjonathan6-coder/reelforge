@@ -19,6 +19,8 @@ from pathlib import Path
 
 import edge_tts
 
+from config import FFMPEG_THREADS
+
 DEFAULT_VOICE = "fr-FR-VivienneMultilingualNeural"
 DEFAULT_RATE = "-5%"  # slower reads as far more natural than the old +8%
 TICKS_PER_SECOND = 10_000_000
@@ -247,7 +249,7 @@ def retime(speech: Speech, target: float, tolerance: float = 1.0) -> Speech:
 
     out_path = speech.audio_path.with_name(f"{speech.audio_path.stem}_retimed.mp3")
     result = subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(speech.audio_path),
+        ["ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS), "-i", str(speech.audio_path),
          "-filter:a", f"atempo={factor:.6f}", str(out_path)],
         capture_output=True, text=True, timeout=120,
     )
@@ -280,7 +282,7 @@ def synthesize(
 
 def _silence(seconds: float, out_path: Path) -> Path:
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+        ["ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS), "-f", "lavfi",
          "-i", "anullsrc=r=24000:cl=mono", "-t", f"{max(0.05, seconds):.3f}",
          "-c:a", "libmp3lame", "-q:a", "6", str(out_path)],
         check=True, capture_output=True, text=True, timeout=60,
@@ -297,7 +299,7 @@ def _concat(parts: list[Path], out_path: Path) -> Path:
     )
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
+            ["ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS), "-f", "concat", "-safe", "0",
              "-i", str(listing), "-c:a", "libmp3lame", "-q:a", "4", str(out_path)],
             check=True, capture_output=True, text=True, timeout=180,
         )
