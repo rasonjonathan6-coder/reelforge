@@ -14,6 +14,7 @@ import json
 import os
 import random
 import re
+from dataclasses import dataclass
 
 import requests
 
@@ -24,6 +25,18 @@ SYSTEM = (
     "Tu écris en français, ton direct, phrases courtes, une idée par phrase. "
     "Tu commences par une accroche forte et tu termines par une question."
 )
+
+DIALOGUE_SYSTEM = (
+    "Tu es un scénariste de vidéos courtes verticales (TikTok, Reels, Shorts). "
+    "Tu écris des dialogues en français : répliques courtes et naturelles, une "
+    "idée par réplique. Utilise un seul personnage si le sujet s'y prête (un "
+    "monologue), ou deux pour un échange. "
+    "Le dialogue commence par une accroche forte et finit par une question."
+)
+
+# Two default characters for the local (offline) dialogue writer. The first is
+# voiced with the user's chosen voice, the second with a contrasting gender.
+DEFAULT_CHARACTERS = ("Léo", "Mia")
 
 
 # ---------------------------------------------------------------------------
@@ -306,3 +319,152 @@ def write_metadata(script: str, topic: str) -> dict:
         if not data.get(key):
             data[key] = value
     return data
+
+
+# ---------------------------------------------------------------------------
+# Dialogue scripts (two characters, one voice each)
+# ---------------------------------------------------------------------------
+@dataclass
+class Turn:
+    speaker: str
+    text: str
+
+
+# Local dialogue templates. `{a}` is the first character, `{b}` the second.
+DIALOGUE_TEMPLATES = [
+    [
+        ("a", "Tu savais que {topic} pouvait changer ta vie ?"),
+        ("b", "Vraiment ? Tout le monde en parle, mais personne n'explique comment."),
+        ("a", "C'est justement le problème : on te donne la théorie, jamais la méthode."),
+        ("b", "Alors donne-la moi. Par où je commence ?"),
+        ("a", "Par une seule action, aujourd'hui, cinq minutes. Pas plus."),
+        ("b", "Cinq minutes ? Ça me paraît trop simple pour marcher."),
+        ("a", "C'est parce que c'est simple que ça marche. La régularité fait le reste."),
+        ("b", "Et si j'oublie un jour ?"),
+        ("a", "Tu reprends le lendemain, sans culpabiliser. C'est tout."),
+        ("b", "D'accord. Je commence ce soir. Et toi, tu commences quand ?"),
+    ],
+    [
+        ("a", "Arrête tout. Ce que je vais te dire sur {topic} va te surprendre."),
+        ("b", "Vas-y, je t'écoute."),
+        ("a", "La plupart des gens abandonnent au bout de trois jours."),
+        ("b", "Pourquoi ? Ça n'a pas l'air si difficile."),
+        ("a", "Parce qu'ils visent la perfection au lieu de la régularité."),
+        ("b", "Donc je dois faire petit, mais tous les jours."),
+        ("a", "Exactement. Petit et tous les jours bat grand et rare."),
+        ("b", "Je note. Une action concrète, chaque jour."),
+        ("a", "Et tu me diras dans une semaine ce que ça a changé."),
+        ("b", "Marché conclu. Prêt à essayer avec moi ?"),
+    ],
+]
+
+
+def _local_dialogue(topic: str, duration: int, words: int | None = None,
+                    characters: tuple[str, str] | None = None) -> list[Turn]:
+    topic = (topic or "ce sujet").strip().rstrip(".!?")
+    target_words = words or tts.estimate_words(duration)
+    first, second = characters or DEFAULT_CHARACTERS
+    rng = random.Random(topic)
+    template = rng.choice(DIALOGUE_TEMPLATES)
+
+    # Fill up to the word budget instead of a fixed number of exchanges: a whole
+    # template cycle is ~105 words, which used to make short dialogues (~30 s)
+    # unreachable and left the duration-fitting loop unable to converge.
+    turns: list[Turn] = []
+    index = 0
+    spoken = 0
+    while spoken < target_words and index < 400:
+        speaker_key, sentence = template[index % len(template)]
+        text = sentence.format(topic=topic)
+        turns.append(Turn(first if speaker_key == "a" else second, text))
+        spoken += len(text.split())
+        index += 1
+    return turns
+
+
+def _parse_dialogue(raw: str) -> list[Turn]:
+    """Parse `Nom: réplique` lines, tolerating bullets, quotes and blank lines."""
+    turns: list[Turn] = []
+    for line in raw.splitlines():
+        line = line.strip().lstrip("-•*").strip()
+        if not line:
+            continue
+        match = re.match(r"^([\wÀ-ÿ'’ .\-]{1,24})\s*[:\u2013\u2014-]\s*(.+)$", line)
+        if not match:
+            continue
+        speaker, text = match.group(1).strip(), match.group(2).strip()
+        text = text.strip('"').strip()
+        if speaker and text and len(text.split()) >= 2:
+            turns.append(Turn(speaker, text))
+    return turns
+
+
+def _order_characters(turns: list[Turn], limit: int | None = None) -> list[str]:
+    """First-appearance order, optionally capped at `limit` distinct characters."""
+    order: list[str] = []
+    for turn in turns:
+        if turn.speaker not in order:
+            order.append(turn.speaker)
+    return order[:limit] if limit else order
+
+
+def parse_dialogue(text: str) -> list[Turn]:
+    """Public wrapper: parse `Nom: réplique` lines from user-edited text."""
+    return _parse_dialogue(text)
+
+
+def characters_of(turns: list[Turn], limit: int | None = None) -> list[str]:
+    """Public wrapper: distinct character names in first-appearance order."""
+    return _order_characters(turns, limit)
+
+
+def write_dialogue_script(
+    topic: str,
+    duration: int = 45,
+    language: str = "français",
+    rate: str = "",
+    characters: tuple[str, str] | None = None,
+) -> tuple[list[Turn], str]:
+    """Two-character dialogue sized for `duration`.
+
+    Returns `(turns, plain_script)` where `plain_script` keeps the `Nom: ...`
+    labels so a user can edit the dialogue by hand and have it re-parsed.
+    """
+    words = tts.estimate_words(duration, rate or tts.DEFAULT_RATE)
+
+    turns: list[Turn] = []
+    if _llm_available():
+        names = characters or DEFAULT_CHARACTERS
+        prompt = (
+            f"Sujet : {topic}\nLangue : {language}\n"
+            f"Personnages : {names[0]} et {names[1]}.\n"
+            f"Écris un dialogue de {duration} secondes, environ {words} mots au total "
+            f"({words * 2} signes environ), entre ces deux personnages.\n"
+            "Format STRICT, une réplique par ligne :\n"
+            f"{names[0]}: première réplique\n"
+            f"{names[1]}: réponse\n"
+            "Pas de didascalies, pas de titres, pas de narration : uniquement les répliques."
+        )
+        try:
+            parsed = _parse_dialogue(_clean(_chat(prompt, system=DIALOGUE_SYSTEM)))
+            spoken = sum(len(turn.text.split()) for turn in parsed)
+            if len(parsed) >= 4 and spoken >= max(15, round(words * 0.5)):
+                turns = parsed
+            else:
+                print("[dialogue] réponse LLM inutilisable; génération locale")
+        except Exception as exc:  # noqa: BLE001 - fall back to the local writer
+            print(f"[dialogue] LLM indisponible ({exc}); génération locale")
+
+    if not turns:
+        turns = _local_dialogue(topic, duration, words, characters)
+
+    # The cast follows the script: a monologue keeps its single voice, a
+    # two-hander gets a man and a woman, and any extra name is folded into the
+    # last distinct speaker so no line is dropped.
+    order = _order_characters(turns)
+    if order:
+        fallback = order[-1]
+        turns = [Turn(turn.speaker if turn.speaker in order else fallback, turn.text) for turn in turns]
+
+    plain = "\n".join(f"{turn.speaker}: {turn.text}" for turn in turns)
+    return turns, plain
