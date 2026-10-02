@@ -26,6 +26,9 @@ from config import (
     QUEUE_BACKEND,
     ROOT,
     STORAGE_BACKEND,
+    VIDEO_FPS,
+    VIDEO_HEIGHT,
+    VIDEO_WIDTH,
     WORKER_COUNT,
 )
 from jobs import CLIP_SUFFIXES, OUTPUT_DIR, Job, load, produce, save
@@ -324,6 +327,7 @@ def public_config() -> dict:
         "llm": LLM_PROVIDER,
         "max_batch_size": MAX_BATCH_SIZE,
         "max_concurrent_jobs": MAX_CONCURRENT_JOBS,
+        "video": {"width": VIDEO_WIDTH, "height": VIDEO_HEIGHT, "fps": VIDEO_FPS},
         "stock_providers": stock,
         "stock_available": bool(stock),
         "stock_cache": {
