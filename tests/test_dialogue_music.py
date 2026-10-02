@@ -108,6 +108,92 @@ def test_local_dialogue_scales_with_duration():
     assert sum(len(t.text.split()) for t in short) < sum(len(t.text.split()) for t in long)
 
 
+# --- LLM dialogue normalisation and validation -----------------------------
+
+# A reasoning model replies with one `Nom: réplique` per line; `_clean` used to
+# collapse the newlines and leave the parser with a single turn.
+LLM_TWO_HANDER = (
+    "Léo: Mon téléphone vient de recevoir un texto qui a été envoyé depuis demain.\n"
+    "Mia: Quoi ? C'est totalement impossible, vérifie l'heure immédiatement.\n"
+    "Léo: Pourtant l'horloge indique déjà la bonne heure sur mon écran.\n"
+    "Mia: Alors quelqu'un nous parle vraiment depuis le futur proche.\n"
+    "Léo: On doit décider quoi faire avant que ce soir arrive.\n"
+    "Mia: Je cherche l'expéditeur pendant que tu notes chaque détail.\n"
+)
+
+
+def test_clean_dialogue_preserves_turn_lines():
+    cleaned = script_writer._clean_dialogue(LLM_TWO_HANDER)
+    assert cleaned.count("\n") == 5
+    assert len(script_writer._parse_dialogue(cleaned)) == 6
+
+
+def test_clean_dialogue_strips_code_fences():
+    fenced = f"```\n{LLM_TWO_HANDER}```"
+    cleaned = script_writer._clean_dialogue(fenced)
+    assert "```" not in cleaned
+    assert len(script_writer._parse_dialogue(cleaned)) == 6
+
+
+def test_clean_dialogue_tolerates_bullets_and_blank_lines():
+    bulleted = "\n".join(f"- {line}" for line in LLM_TWO_HANDER.splitlines())
+    cleaned = script_writer._clean_dialogue(f"\n{bulleted}\n\n")
+    assert len(script_writer._parse_dialogue(cleaned)) == 6
+
+
+def _stub_llm(monkeypatch, reply: str):
+    monkeypatch.setattr(script_writer, "_llm_available", lambda: True)
+    monkeypatch.setattr(script_writer, "_chat", lambda *a, **k: reply)
+
+
+def test_llm_two_character_dialogue_is_used(monkeypatch):
+    _stub_llm(monkeypatch, LLM_TWO_HANDER)
+    turns, plain = script_writer.write_dialogue_script("un message du futur", duration=30)
+    assert script_writer.characters_of(turns) == ["Léo", "Mia"]
+    assert plain.startswith("Léo:")
+    assert len(turns) == 6
+
+
+def test_llm_fenced_dialogue_is_used(monkeypatch):
+    _stub_llm(monkeypatch, f"```\n{LLM_TWO_HANDER}```")
+    turns, _ = script_writer.write_dialogue_script("un message du futur", duration=30)
+    assert script_writer.characters_of(turns) == ["Léo", "Mia"]
+
+
+def test_llm_monologue_keeps_one_character(monkeypatch):
+    _stub_llm(
+        monkeypatch,
+        "Léo: Je reçois un message qui a été envoyé depuis demain matin.\n"
+        "Léo: L'heure indiquée sur l'écran correspond exactement à maintenant.\n"
+        "Léo: Je dois décider quoi faire avant la fin de la journée.\n"
+        "Léo: Et si je changeais la suite des choses dès ce soir ?\n"
+        "Léo: Personne d'autre ne peut m'aider sur ce problème étrange.\n",
+    )
+    turns, _ = script_writer.write_dialogue_script("un message du futur", duration=30)
+    assert script_writer.characters_of(turns) == ["Léo"]
+
+
+def test_llm_three_character_dialogue_keeps_three(monkeypatch):
+    _stub_llm(
+        monkeypatch,
+        "Léo: Un message est arrivé sur mon téléphone depuis demain matin.\n"
+        "Maya: Impossible, montre-moi ton écran tout de suite maintenant.\n"
+        "Paul: Attendez, l'heure indiquée est exacte cette fois vraiment.\n"
+        "Léo: On doit agir avant ce soir sans perdre une minute.\n"
+        "Maya: Je vérifie l'application pendant que vous notez tout.\n"
+        "Paul: Je préviens les autres avant que le futur arrive ici.\n",
+    )
+    turns, _ = script_writer.write_dialogue_script("un message du futur", duration=30)
+    assert script_writer.characters_of(turns) == ["Léo", "Maya", "Paul"]
+
+
+def test_unusable_llm_reply_falls_back_to_local(monkeypatch):
+    _stub_llm(monkeypatch, "Désolé, je ne peux pas t'aider avec cette demande.")
+    turns, _ = script_writer.write_dialogue_script("un message du futur", duration=30)
+    assert len(turns) >= 4
+    assert script_writer.characters_of(turns) == list(script_writer.DEFAULT_CHARACTERS)
+
+
 # --- per-character subtitles ----------------------------------------------
 
 def test_speaker_palette_assigns_distinct_colors():

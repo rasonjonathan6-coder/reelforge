@@ -76,6 +76,17 @@ an mp4 + a JSON sidecar (provider url/id, width/height/duration, timestamps).
   Music is cosmetic: a failure must never fail the job.
 - `tremolo` needs named options (`f=…:d=…`): a positional second value is a parse
   error ("No option name near ..."), so the value must carry the `d=` prefix.
+- An LLM dialogue reply must be normalised with `_clean_dialogue`, never `_clean`:
+  `_clean` collapses all whitespace and would merge every `Nom: réplique` line
+  into one, leaving `_parse_dialogue` with a single turn and forcing the local
+  fallback. `_clean_dialogue` normalises line by line and drops code fences.
+- Reasoning models (NVIDIA nemotron) emit `reasoning_content` before `content`,
+  so a small `max_tokens` can be consumed entirely by reasoning and return an
+  empty `content` with `finish_reason="length"`. The NVIDIA budget starts at 4096
+  (`NVIDIA_MAX_TOKENS`) and grows on empty replies.
+- Dialogue duration fitting only runs when `auto_script` is set (`produce()`),
+  which the topic panel does by default; a hand-edited script stays authoritative
+  and is never retimed.
 
 ## Gotchas
 - Do NOT pass a per-scene frame count to `zoompan`'s `d`; it freezes the frame

@@ -86,7 +86,10 @@ def _chat_nvidia(prompt: str, system: str) -> str:
         "top_p": 0.95,
     }
 
-    budget = int(os.environ.get("NVIDIA_MAX_TOKENS", "2048"))
+    # Reasoning models (nemotron) emit `reasoning_content` *before* `content`, so
+    # a budget sized for the visible answer alone can be fully consumed by the
+    # reasoning and return `finish_reason="length"` with an empty `content`.
+    budget = int(os.environ.get("NVIDIA_MAX_TOKENS", "4096"))
     last_reason = ""
     for _ in range(3):
         resp = requests.post(url, headers=headers, json={**body, "max_tokens": budget}, timeout=180)
@@ -218,6 +221,27 @@ def _clean(text: str) -> str:
     text = text.replace("*", "").replace("_", "")
     text = re.sub(r"\s+", " ", text)
     return text.strip().strip('"')
+
+
+_FENCE = re.compile(r"^\s*`{3,}\w*\s*$")
+
+
+def _clean_dialogue(text: str) -> str:
+    """Normalise a dialogue reply one line at a time.
+
+    `_clean` collapses all whitespace, which merges every `Nom: réplique` line
+    into a single line and leaves `_parse_dialogue` with one turn. Normalising
+    per line keeps the structure, drops markdown code fences and tolerates
+    bullets, quotes and stray blank lines.
+    """
+    lines: list[str] = []
+    for raw in (text or "").splitlines():
+        if _FENCE.match(raw):
+            continue
+        line = _clean(raw)
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
 
 
 def write_script(
@@ -446,7 +470,7 @@ def write_dialogue_script(
             "Pas de didascalies, pas de titres, pas de narration : uniquement les répliques."
         )
         try:
-            parsed = _parse_dialogue(_clean(_chat(prompt, system=DIALOGUE_SYSTEM)))
+            parsed = _parse_dialogue(_clean_dialogue(_chat(prompt, system=DIALOGUE_SYSTEM)))
             spoken = sum(len(turn.text.split()) for turn in parsed)
             if len(parsed) >= 4 and spoken >= max(15, round(words * 0.5)):
                 turns = parsed
