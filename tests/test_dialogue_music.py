@@ -258,3 +258,46 @@ def test_synthesize_dialogue_tags_words_with_their_speaker(tmp_path):
     # Words keep a monotonic timeline after stitching the takes.
     starts = [w.start for w in speech.words]
     assert starts == sorted(starts)
+
+
+# --- per-turn visual scenes (dialogue) ------------------------------------
+
+class _W:
+    def __init__(self, text, speaker):
+        self.text, self.speaker = text, speaker
+
+
+class _Speech:
+    def __init__(self, words):
+        self.words = words
+
+
+def test_turn_scenes_group_words_by_speaker_change():
+    from generate import _turn_scenes
+
+    speech = _Speech([
+        _W("Tu", "Léo"), _W("vois", "Léo"),
+        _W("Oui", "Mia"),
+        _W("Encore", "Léo"), _W("moi", "Léo"),
+    ])
+    texts, weights = _turn_scenes(speech)
+    assert texts == ["Tu vois", "Oui", "Encore moi"]
+    assert weights == [2.0, 1.0, 2.0]
+
+
+def test_turn_scenes_supports_three_speakers():
+    from generate import _turn_scenes
+
+    speech = _Speech([
+        _W("Salut", "Léo"), _W("Bonjour", "Mia"), _W("Coucou", "Paul"),
+    ])
+    texts, weights = _turn_scenes(speech)
+    assert texts == ["Salut", "Bonjour", "Coucou"]
+    assert weights == [1.0, 1.0, 1.0]
+
+
+def test_turn_scenes_none_for_single_voice():
+    from generate import _turn_scenes
+
+    speech = _Speech([_W("Une", ""), _W("narration", "")])
+    assert _turn_scenes(speech) == (None, None)

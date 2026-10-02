@@ -70,6 +70,9 @@ class GenerateRequest(BaseModel):
     music_mood: str = ""
     logo: str = ""
     clips_dir: str = ""
+    animated_characters: bool = False
+    character_style: str = "anime"
+    animation_provider: str = ""
 
 
 class ScriptRequest(BaseModel):

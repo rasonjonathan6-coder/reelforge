@@ -90,6 +90,7 @@ class Background:
     clips: list[str] = field(default_factory=list)
     scene_origins: list[str] = field(default_factory=list)
     cache_stats: dict = field(default_factory=dict)
+    scene_weights: list[float] = field(default_factory=list)
 
     @property
     def visual_source(self) -> str:
@@ -129,6 +130,18 @@ def _per_scene(duration: float, count: int) -> float:
 
 def _join_xfade(segments: list[Path], duration: float, out_path: Path) -> Path:
     """Cross-dissolve the segments into a single clip of `duration` seconds."""
+    weights = [1.0] * len(segments)
+    return _join_xfade_timed(segments, weights, duration, out_path)
+
+
+def _join_xfade_timed(segments: list[Path], weights: list[float], duration: float,
+                      out_path: Path) -> Path:
+    """Cross-dissolve segments whose on-screen time follows `weights`.
+
+    A dialogue gives each turn its own scene, and turns are not equally long, so
+    the slot of each segment is proportional to its weight (its word count)
+    rather than the flat `duration / count` used for narration.
+    """
     if len(segments) == 1:
         _run([
             "ffmpeg", "-y", "-loglevel", "error", "-i", str(segments[0]),
@@ -137,15 +150,16 @@ def _join_xfade(segments: list[Path], duration: float, out_path: Path) -> Path:
         ])
         return out_path
 
+    total = sum(weights) or float(len(weights))
     inputs: list[str] = []
     for seg in segments:
         inputs += ["-i", str(seg)]
 
-    per_scene = _per_scene(duration, len(segments))
     steps = []
     prev = "[0:v]"
+    offset = 0.0
     for index in range(1, len(segments)):
-        offset = index * (per_scene - TRANSITION)
+        offset += (duration + TRANSITION * (len(segments) - 1)) * weights[index - 1] / total - TRANSITION
         label = f"[v{index}]"
         steps.append(
             f"{prev}[{index}:v]xfade=transition=fade:duration={TRANSITION:.3f}"
@@ -248,6 +262,40 @@ def _scene_texts(script: str, count: int) -> list[str]:
     return [" ".join(b) for b in buckets]
 
 
+def _group_scenes(texts: list[str], weights: list[float], cap: int) -> tuple[list[str], list[float]]:
+    """Fold an over-long scene list into at most `cap` contiguous scenes.
+
+    Keeps the script order (each scene is a run of consecutive turns) and sums
+    the weights, so the on-screen time stays proportional. Used to bound the
+    number of stock downloads when a dialogue has many short turns.
+    """
+    return _fold_groups(texts, cap), _fold_groups(weights, cap, mode="sum")
+
+
+def _fold_groups(values: list, cap: int, mode: str = "join") -> list:
+    """Group `values` into `cap` contiguous buckets, keeping the script order.
+
+    `mode="join"` concatenates text buckets (the first non-empty wins for
+    `mode="first"`, used for places); `mode="sum"` adds numeric buckets (the
+    weights). All callers use the same bucket boundaries, so texts, weights,
+    places and actions stay aligned.
+    """
+    if len(values) <= cap:
+        return list(values)
+    out: list = []
+    for index in range(cap):
+        lo = index * len(values) // cap
+        hi = (index + 1) * len(values) // cap
+        chunk = values[lo:hi]
+        if mode == "sum":
+            out.append(sum(chunk))
+        elif mode == "first":
+            out.append(next((x for x in chunk if x), ""))
+        else:
+            out.append(" ".join(x for x in chunk if x).strip())
+    return out
+
+
 def _scene_count(duration: float) -> int:
     return max(3, min(MAX_STOCK_SCENES, math.ceil(max(duration, 1.0) / SCENE_SECONDS)))
 
@@ -258,13 +306,32 @@ def scene_queries(topic: str, script: str, count: int) -> list[str]:
     Topic words keep the reel on subject even when a scene mentions an aside;
     the scene's own words give consecutive scenes different footage.
     """
+    return queries_for_texts(topic, _scene_texts(script, count))
+
+
+def _place_words(place: str) -> list[str]:
+    """Words of a detected place, kept even when short (e.g. "rue", "mer")."""
+    words = re.findall(r"[A-Za-zÀ-ÿ]{3,}", (place or "").lower())
+    return [w for w in words if w not in STOPWORDS]
+
+
+def queries_for_texts(topic: str, texts: list[str], places: list[str] | None = None) -> list[str]:
+    """Turn one text per scene into one search query per scene.
+
+    `places` gives each scene its own setting (detected from that turn), so the
+    background follows the script: a kitchen turn searches for a kitchen, a
+    street turn for a street.
+    """
     topic_words = _keywords(topic, 3)
-    scenes = _scene_texts(script, count)
     queries: list[str] = []
     seen: set[str] = set()
-    for index in range(count):
-        scene_words = _keywords(scenes[index], 2)
-        words = (topic_words[:2] + scene_words)[:3]
+    for index, text in enumerate(texts):
+        place = places[index] if places and index < len(places) else ""
+        scene_words = _keywords(text, 2)
+        if place:
+            words = (topic_words[:1] + _place_words(place) + scene_words)[:3]
+        else:
+            words = (topic_words[:2] + scene_words)[:3]
         if not words:
             words = topic_words or ["abstract background"]
         modifier = VISUAL_MODIFIERS[index % len(VISUAL_MODIFIERS)]
@@ -548,39 +615,60 @@ def _collect_stock(queries: list[str], work_dir: Path) -> tuple[list[Path], list
 # ---------------------------------------------------------------------------
 # Assembly
 # ---------------------------------------------------------------------------
-def _cover_filter() -> str:
+def _cover_filter(pan: bool = False) -> str:
     """Fill 1080x1920 by cropping, never by stretching (aspect ratio kept).
 
     `d=1` lets every source frame through, so the clip's own motion is kept;
     the zoom is driven by `in_time` so it still progresses across the scene.
+    `pan` also slides the crop sideways while zoomed in, so a walking scene
+    reads as the camera travelling with the character.
     """
+    if pan:
+        x_expr = "iw/2-(iw/zoom/2)+(iw-iw/zoom)/2*sin(2*PI*in_time/8)"
+        y_expr = "ih/2-(ih/zoom/2)"
+    else:
+        x_expr = "iw/2-(iw/zoom/2)"
+        y_expr = "ih/2-(ih/zoom/2)"
     return (
         f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
         f"crop={WIDTH}:{HEIGHT},"
         f"zoompan=z='min(1+{ZOOM_PER_SECOND}*in_time,{ZOOM_MAX})':d=1:"
-        f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={WIDTH}x{HEIGHT}:fps={FPS},"
+        f"x='{x_expr}':y='{y_expr}':s={WIDTH}x{HEIGHT}:fps={FPS},"
         f"format=yuv420p"
     )
 
 
-def _montage(clips: list[Path], duration: float, work_dir: Path, out_path: Path) -> Path:
-    """Trim/loop each clip to its scene slot and cross-dissolve them."""
+def _montage(clips: list[Path], duration: float, work_dir: Path, out_path: Path,
+             weights: list[float] | None = None,
+             pans: list[bool] | None = None) -> Path:
+    """Trim/loop each clip to its scene slot and cross-dissolve them.
+
+    `weights` gives each clip its share of the timeline (one weight per clip);
+    when omitted every clip gets an equal slot, as for narration. `pans` adds a
+    travelling crop to the scenes whose character is walking.
+    """
     seg_dir = work_dir / "segments"
     seg_dir.mkdir(parents=True, exist_ok=True)
-    per_scene = _per_scene(duration, len(clips))
+    if not weights or len(weights) != len(clips):
+        weights = [1.0] * len(clips)
+    if not pans or len(pans) != len(clips):
+        pans = [False] * len(clips)
+    total = sum(weights) or float(len(clips))
+    span = duration + TRANSITION * (len(clips) - 1)
+    slots = [span * w / total for w in weights]
     segments: list[Path] = []
     for index, clip in enumerate(clips):
         seg = seg_dir / f"seg_{index}.mp4"
         _run([
             "ffmpeg", "-y", "-loglevel", "error",
             "-stream_loop", "-1", "-i", str(clip),
-            "-t", f"{per_scene:.3f}",
-            "-vf", _cover_filter(), "-an",
+            "-t", f"{slots[index]:.3f}",
+            "-vf", _cover_filter(pan=pans[index]), "-an",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
             "-pix_fmt", "yuv420p", str(seg),
         ])
         segments.append(seg)
-    return _join_xfade(segments, duration, out_path)
+    return _join_xfade_timed(segments, weights, duration, out_path)
 
 
 def build_background_info(
@@ -591,30 +679,53 @@ def build_background_info(
     clips: list[Path] | None = None,
     topic: str = "",
     script: str = "",
+    scene_texts: list[str] | None = None,
+    scene_weights: list[float] | None = None,
+    scene_places: list[str] | None = None,
+    scene_pans: list[bool] | None = None,
 ) -> Background:
     """Produce the moving background and report which source was really used.
 
     `clips` (caller-supplied, e.g. AI scenes) takes priority over every stock
     source. When stock is requested but nothing usable comes back, the local
     animated fallback is used and clearly reported as such.
+
+    `scene_texts` gives one text per scene (a dialogue passes one per turn, so
+    the footage follows the script line by line); `scene_weights` sizes each
+    scene's on-screen time. `scene_places` gives each scene its own setting
+    (detected from that turn) so the decor follows the script; `scene_pans`
+    adds a travelling camera to the walking scenes. All default to narration.
     """
     work_dir.mkdir(parents=True, exist_ok=True)
     out_path = work_dir / "background.mp4"
 
     if clips:
         selected = list(clips)
-        _montage(selected, duration, work_dir, out_path)
+        _montage(selected, duration, work_dir, out_path, weights=scene_weights,
+                 pans=scene_pans)
         return Background(out_path, ["ai_clips"], [], [c.name for c in selected])
 
     queries: list[str] = []
     if use_stock:
-        queries = scene_queries(topic or query, script, _scene_count(duration))
+        texts = scene_texts or _scene_texts(script, _scene_count(duration))
+        weights = scene_weights if scene_weights and len(scene_weights) == len(texts) else None
+        places = scene_places if scene_places and len(scene_places) == len(texts) else None
+        pans = scene_pans if scene_pans and len(scene_pans) == len(texts) else None
+        if scene_texts:
+            texts = _fold_groups(texts, MAX_STOCK_SCENES)
+            weights = _fold_groups(weights or [1.0] * len(scene_texts), MAX_STOCK_SCENES, mode="sum")
+            places = _fold_groups(places, MAX_STOCK_SCENES, mode="first") if places else None
+            pans = _fold_groups(pans, MAX_STOCK_SCENES, mode="first") if pans else None
+        queries = queries_for_texts(topic or query, texts, places=places)
         stock, sources, stats, origins = _collect_stock(queries, work_dir)
         if stock:
-            _montage(stock, duration, work_dir, out_path)
+            weights = weights if weights and len(weights) == len(stock) else None
+            pans = pans if pans and len(pans) == len(stock) else None
+            _montage(stock, duration, work_dir, out_path, weights=weights, pans=pans)
             return Background(
                 out_path, sources, queries, [c.name for c in stock],
                 scene_origins=origins, cache_stats=stats.as_dict(),
+                scene_weights=list(weights or []),
             )
         print("[visuals] aucune vidéo stock exploitable — fallback local utilisé")
 
@@ -630,9 +741,15 @@ def build_background(
     clips: list[Path] | None = None,
     topic: str = "",
     script: str = "",
+    scene_texts: list[str] | None = None,
+    scene_weights: list[float] | None = None,
+    scene_places: list[str] | None = None,
+    scene_pans: list[bool] | None = None,
 ) -> Path:
     """Backwards-compatible wrapper returning only the background path."""
     return build_background_info(
         duration, work_dir, query=query, use_stock=use_stock,
         clips=clips, topic=topic, script=script,
+        scene_texts=scene_texts, scene_weights=scene_weights,
+        scene_places=scene_places, scene_pans=scene_pans,
     ).path

@@ -39,6 +39,7 @@ STEP_PROGRESS = {
     "tts": 35,
     "subtitles": 50,
     "visuals": 60,
+    "animation": 70,
     "compose": 75,
     "metadata": 92,
     "completed": 100,
@@ -55,7 +56,7 @@ def step_progress(step: str, sub: int | None = None) -> int:
     base = STEP_PROGRESS.get(step, 0)
     if sub is None:
         return base
-    order = ["script", "tts", "subtitles", "visuals", "compose", "metadata", "completed"]
+    order = ["script", "tts", "subtitles", "visuals", "animation", "compose", "metadata", "completed"]
     nxt = STEP_PROGRESS[order[order.index(step) + 1]] if step in order and step != "completed" else base
     return max(base, min(99, base + round((nxt - base) * (sub / 100))))
 
@@ -375,6 +376,9 @@ def produce(job_id: str, req: dict) -> None:
             speakers=speakers,
             music_enabled=bool(req.get("music", True)),
             music_mood=req.get("music_mood") or None,
+            animated_characters=bool(req.get("animated_characters")),
+            character_style=req.get("character_style") or "anime",
+            animation_provider=req.get("animation_provider") or None,
         )
 
         # Music report written by `generate`; absent when the bed was skipped.

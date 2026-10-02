@@ -18,7 +18,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from pipeline import compose, music, overlay, script_writer, subtitles, tts, visuals
+from pipeline import compose, music, overlay, script_understanding, script_writer, subtitles, tts, visuals
+from pipeline import animation
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_FFMPEG = ROOT / ".." / "bin" / "ffmpeg"
@@ -40,6 +41,140 @@ def _ensure_ffmpeg() -> None:
     raise RuntimeError("ffmpeg not found. Install it or run with /workspace/bin on PATH.")
 
 
+def _turn_scenes(speech) -> tuple[list[str] | None, list[float] | None]:
+    """One visual scene per dialogue turn, sized by that turn's word count.
+
+    The scene follows the script line by line: each turn's own words seed its
+    scene's search and its word count sets the scene's on-screen time, so the
+    footage changes when a character starts speaking. A new scene starts on each
+    speaker change, which covers any number of characters. Returns
+    `(None, None)` for a single-voice narration, keeping uniform sentence scenes.
+    """
+    words = [w for w in (getattr(speech, "words", None) or []) if getattr(w, "speaker", "")]
+    if not words:
+        return None, None
+    texts: list[str] = []
+    weights: list[float] = []
+    current = ""
+    for word in words:
+        if word.speaker != current:
+            current = word.speaker
+            texts.append("")
+            weights.append(0.0)
+        weights[-1] += 1.0
+        texts[-1] = (texts[-1] + " " + word.text).strip()
+    if len(texts) < 2:
+        return None, None
+    return texts, weights
+
+
+def _turn_places(texts: list[str]) -> list[str]:
+    """Setting detected per turn, so the decor follows the script line by line."""
+    return [script_understanding.detect_place(t) for t in texts]
+
+
+def _turn_pans(texts: list[str]) -> list[bool]:
+    """True for turns whose character walks, so the camera travels with them."""
+    return [script_understanding.detect_action(t) in ("marche", "court") for t in texts]
+
+
+def _render_characters(speech, tmp: Path, duration: float, understanding: dict) -> list[Path]:
+    """Render one animated character per speaker, or [] for a narration.
+
+    Each character's speaking cues come from its own timed words, so it mouths
+    the lines the script gives it and idles (or performs the script's action)
+    the rest of the time. Rendered as RGBA clips and overlaid by `compose`.
+    """
+    from pipeline import avatars
+
+    words = [w for w in (getattr(speech, "words", None) or []) if getattr(w, "speaker", "")]
+    if not words:
+        return []
+    by_speaker: dict[str, list] = {}
+    spoken: dict[str, str] = {}
+    for word in words:
+        by_speaker.setdefault(word.speaker, []).append(word)
+        spoken[word.speaker] = (spoken.get(word.speaker, "") + " " + word.text).strip()
+    fallback = understanding.get("action") or None
+    out_dir = tmp / "characters"
+    paths: list[Path] = []
+    actions: list[str] = []
+    for index, (name, said) in enumerate(by_speaker.items()):
+        # Each character performs the action from its own lines, not a global one.
+        action = script_understanding.detect_action(spoken.get(name, "")) or fallback
+        actions.append(action or "-")
+        # The words themselves drive the visemes, so the mouth matches the voice.
+        paths.append(avatars.render_character(
+            name, said, out_dir / f"char_{index}.mov", duration, action=action,
+        ))
+    print(f"      -> {len(paths)} personnage(s) animé(s) [actions: {', '.join(actions)}]")
+    return paths
+
+
+def _dialogue_lines(text: str, speech) -> list[tuple[str, str]]:
+    """Recover the ordered `(speaker, line)` pairs the scenes must animate."""
+    turns = script_writer.parse_dialogue(text) if text and ":" in text else []
+    if turns:
+        return [(getattr(t, "speaker", ""), getattr(t, "text", "")) for t in turns]
+    # Fall back to grouping the timed words by speaker, in spoken order.
+    lines: list[tuple[str, str]] = []
+    for word in getattr(speech, "words", None) or []:
+        speaker = getattr(word, "speaker", "")
+        if not speaker:
+            continue
+        if lines and lines[-1][0] == speaker:
+            lines[-1] = (speaker, f"{lines[-1][1]} {word.text}".strip())
+        else:
+            lines.append((speaker, word.text))
+    return lines
+
+
+def _generate_animated(speech, text, out_path, tmp, info_out, duration, *,
+                       character_style="anime", animation_provider=None,
+                       music_enabled=True, music_mood=None, logo_text=None,
+                       topic="", speakers=None, on_step=None) -> Path:
+    """Real animated-character reel: every scene is drawn frame by frame."""
+    lines = _dialogue_lines(text, speech)
+    if not lines:
+        lines = [("Narrateur", text.strip()[:160] or "Reel")]
+    voices = {s: (v or "") for s, v in zip(speakers or [], speakers or [])}
+    ass = tmp / "captions.ass"
+    if not ass.exists():
+        ass = subtitles.build_ass(speech.words, ass, speakers=speakers)
+
+    result = animation.generate_animated_reel(
+        speech, lines, out_path, tmp / "animation",
+        target_duration=duration, voice_map=voices,
+        environment=script_understanding.detect_place(text),
+        visual_style=character_style, provider_name=animation_provider,
+        captions=ass, audio_path=speech.audio_path, on_step=on_step,
+    )
+    print(f"      -> {len(result.scenes)} scènes animées, provider « {result.provider} »")
+
+    if logo_text or overlay.available():
+        try:
+            overlaid = tmp / "overlay.mp4"
+            overlay.add_overlay(out_path, overlaid, duration, logo_text=logo_text)
+            shutil.move(str(overlaid), str(out_path))
+        except Exception as exc:  # noqa: BLE001 - overlay is cosmetic, never fatal
+            print(f"      -> overlay skipped ({exc})")
+
+    if music_enabled:
+        try:
+            meta = music.build(out_path, tmp, duration, mood=music_mood, topic=topic, script=text)
+            shutil.move(meta["path"], str(out_path))
+            print(f"      -> musique « {meta['label']} » (voix duckée)")
+        except Exception as exc:  # noqa: BLE001 - music is optional
+            print(f"      -> musique ignorée ({exc})")
+
+    if info_out:
+        info_out.mkdir(parents=True, exist_ok=True)
+        animation.write_animation_info(result, info_out)
+        shutil.copy(speech.audio_path, info_out / "audio.mp3")
+        shutil.copy(ass, info_out / "subtitles.ass")
+    return out_path
+
+
 def generate(
     text: str,
     out_path: Path,
@@ -58,6 +193,9 @@ def generate(
     speakers: list[str] | None = None,
     music_enabled: bool = True,
     music_mood: str | None = None,
+    animated_characters: bool = False,
+    character_style: str = "anime",
+    animation_provider: str | None = None,
 ) -> Path:
     """Render one reel.
 
@@ -95,17 +233,41 @@ def generate(
 
     report("visuals", 60)
     print("[3/5] Preparing visuals...")
+    if animated_characters:
+        print("      -> mode personnages animés (vraie animation, pas de Ken Burns)")
+        return _generate_animated(
+            speech, text, out_path, tmp, info_out, duration,
+            character_style=character_style, animation_provider=animation_provider,
+            music_enabled=music_enabled, music_mood=music_mood,
+            logo_text=logo_text, topic=topic, speakers=speakers, on_step=report,
+        )
+    scene_texts, scene_weights = _turn_scenes(speech)
+    # The script drives the setting and the camera: a kitchen turn searches for a
+    # kitchen, a walking turn pans, so the decor follows the script line by line.
+    understanding = script_understanding.describe(text)
+    place = understanding["place"]
+    scene_places = _turn_places(scene_texts) if scene_texts else None
+    scene_pans = _turn_pans(scene_texts) if scene_texts else None
+    # Fall back to the script-level place when no turn names one.
+    if scene_places and place and not any(scene_places):
+        scene_places = [place] * len(scene_places)
     visuals_info = visuals.build_background_info(
         duration, tmp, query=query, use_stock=use_stock, clips=clips,
         topic=topic, script=text,
+        scene_texts=scene_texts, scene_weights=scene_weights,
+        scene_places=scene_places, scene_pans=scene_pans,
     )
     background = visuals_info.path
-    print(f"      -> {background.name} ({visuals_info.message})")
+    print(f"      -> {background.name} ({visuals_info.message})"
+          + (f" [lieu: {place}]" if place else ""))
+
+    characters = _render_characters(speech, tmp, duration, understanding)
 
     report("compose", 75)
     print("[4/5] Composing final video...")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    compose.compose(background, speech.audio_path, ass, out_path, duration)
+    compose.compose(background, speech.audio_path, ass, out_path, duration,
+                    characters=characters)
 
     if logo_text or overlay.available():
         print("[5/5] Adding progress bar and branding...")
@@ -150,6 +312,7 @@ def generate(
                     "clips": visuals_info.clips,
                     "scene_origins": visuals_info.scene_origins,
                     "cache": visuals_info.cache_stats,
+                    "scene_weights": visuals_info.scene_weights,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -285,6 +448,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--logo", help="Brand text shown at the top of the video")
     parser.add_argument("--keep-work", action="store_true")
+    # Animated-character mode (same behaviour as the API's `animated_characters`).
+    parser.add_argument(
+        "--animated-characters", action="store_true",
+        help="Render real animated cartoon characters (frame-by-frame lip-sync, "
+             "walk/head/arms) instead of the stock Ken-Burns slideshow.",
+    )
+    parser.add_argument(
+        "--character-style", default="anime",
+        choices=["anime", "cartoon_2d", "cartoon_3d", "stylized"],
+        help="Animated-character art style (default: anime)",
+    )
+    parser.add_argument(
+        "--animation-provider", default="",
+        choices=["", "local", "remote"],
+        help="Animation backend; 'local' is the free CPU engine (default)",
+    )
     # Dialogue / monologue (same behaviour as the API's `dialogue` field).
     parser.add_argument(
         "--dialogue", action="store_true",
@@ -384,6 +563,9 @@ def main() -> None:
         speakers=speakers,
         music_enabled=args.music,
         music_mood=args.music_mood or None,
+        animated_characters=args.animated_characters,
+        character_style=args.character_style,
+        animation_provider=args.animation_provider or None,
     )
 
 

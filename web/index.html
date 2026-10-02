@@ -189,6 +189,26 @@
 
     <div class="row">
       <div>
+        <label for="video-type">Type de vidéo</label>
+        <select id="video-type">
+          <option value="stock" selected>Voix off + vidéos réelles (faceless)</option>
+          <option value="animated">Personnages animés (dessin animé qui parle)</option>
+        </select>
+      </div>
+      <div>
+        <label for="character-style">Style des personnages</label>
+        <select id="character-style">
+          <option value="anime" selected>Anime (2D)</option>
+          <option value="cartoon_2d">Cartoon 2D</option>
+          <option value="cartoon_3d">Cartoon 3D</option>
+          <option value="stylized">Stylisé</option>
+        </select>
+      </div>
+    </div>
+    <div class="hint" id="video-type-hint">Mode personnages animés : chaque scène est dessinée image par image (bouche synchronisée, tête, yeux, bras) — pas un zoom sur une image fixe. Utilise un dialogue pour que plusieurs personnages parlent.</div>
+
+    <div class="row">
+      <div>
         <label for="music">Musique de fond</label>
         <select id="music">
           <option value="1" selected>Générée (selon l'humeur du script)</option>
@@ -442,6 +462,16 @@ function renderStockHint(){
 }
 loadConfig();
 
+// Animated-character mode draws every scene itself, so the stock source is moot.
+const videoType = $('video-type');
+function syncVideoType(){
+  const animated = videoType.value === 'animated';
+  const stock = $('stock'); if(stock) stock.disabled = animated;
+  const hint = $('video-type-hint'); if(hint) hint.style.color = animated ? 'var(--accent)' : '';
+}
+videoType.addEventListener('change', syncVideoType);
+syncVideoType();
+
 // --- mode switch (simple / lot) ---
 function showMode(which){
   const single = which === 'single';
@@ -558,7 +588,8 @@ $('go-batch').addEventListener('click', launchBatch);
 
 const STEP_FR = {
   queued:'En attente', running:'En cours', script:'Génération du script', tts:'Génération de la voix',
-  visuals:'Préparation des visuels', subtitles:'Sous-titres', compose:'Montage final',
+  visuals:'Préparation des visuels', animation:'Animation des personnages',
+  subtitles:'Sous-titres', compose:'Montage final',
   metadata:'Métadonnées', completed:'Terminé', failed:'Échec'
 };
 
@@ -696,7 +727,9 @@ async function generate(){
     use_stock: $('stock').value === '1',
     music: $('music').value === '1',
     music_mood: $('music-mood').value,
-    logo: ($('logo').value || '').trim()
+    logo: ($('logo').value || '').trim(),
+    animated_characters: $('video-type').value === 'animated',
+    character_style: $('character-style').value
   };
 
   // AI-generated clips take priority over every automatic visual source.
