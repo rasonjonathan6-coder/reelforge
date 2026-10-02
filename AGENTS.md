@@ -61,6 +61,14 @@ an mp4 + a JSON sidecar (provider url/id, width/height/duration, timestamps).
 ## Gotchas
 - Do NOT pass a per-scene frame count to `zoompan`'s `d`; it freezes the frame
   (each input frame gets its own sequence). Use `d=1` for continuous motion.
+- The animated fallback must stay *visibly* animated: dark low-contrast palettes
+  plus `gblur=sigma=38` collapse into a near-black still image once encoded.
+  Keep the palettes bright and the blur light (`sigma=6`), or "Visuels générés"
+  looks like a frozen picture.
+- `auto_script` fitting only converges when `duration` reaches the backend. The
+  UI must send it; a topic-script drafted for another duration cannot be retimed
+  by rewriting alone (LLM output length varies), so `produce()` re-drafts at the
+  target before `_fit_speech`.
 - Stock clips are looped with `-stream_loop -1` then cut with `-t`, so short
   clips fill a longer scene without freezing.
 - Docker daemon needs `sudo -n`; build with `sudo -n docker build -t reelforge .`.

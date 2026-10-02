@@ -46,13 +46,15 @@ PEXELS_URL = "https://api.pexels.com"
 PIXABAY_URL = "https://pixabay.com"
 
 PALETTES = [
-    ("0x0f0c29", "0x302b63", "0x24243e", "0x1b1b3a"),
-    ("0x1a1a2e", "0x16213e", "0x0f3460", "0x533483"),
-    ("0x000428", "0x004e92", "0x0b8793", "0x1b2a4a"),
-    ("0x232526", "0x414345", "0x2c3e50", "0x1c1c1c"),
-    ("0x3a1c71", "0xd76d77", "0x4a2c8f", "0x1e1147"),
-    ("0x42275a", "0x734b6d", "0x2c1b47", "0x14061f"),
-    ("0x0b486b", "0xf56217", "0x3b1f2b", "0x1a1a2e"),
+    # Bright, saturated palettes: a dark, low-contrast gradient reads as a
+    # frozen image once compressed, so keep the fallback vivid and luminous.
+    ("0x6a11cb", "0x2575fc", "0x00c6ff", "0x7b2ff7"),
+    ("0xff512f", "0xf09819", "0xff2e63", "0x7b1fa2"),
+    ("0x00b09b", "0x96c93d", "0x1fa2ff", "0x12d8fa"),
+    ("0x2af598", "0x009efd", "0x22e1ff", "0x3b2667"),
+    ("0xf857a6", "0xff5858", "0x8e2de2", "0x4a00e0"),
+    ("0xfc466b", "0x3f5efb", "0x00d2ff", "0x3a47d5"),
+    ("0x11998e", "0x38ef7d", "0xf7b733", "0xfc4a1a"),
 ]
 
 STOPWORDS = {
@@ -168,8 +170,8 @@ def _scene_filters() -> str:
     return (
         f"zoompan=z='min(1+{ZOOM_PER_SECOND}*in_time,{ZOOM_MAX})':d=1"
         f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={WIDTH}x{HEIGHT}:fps={FPS},"
-        f"noise=alls=7:allf=t+u,"
-        f"vignette=PI/4.5,"
+        f"noise=alls=14:allf=t+u,"
+        f"vignette=PI/5.5,"
         f"format=yuv420p"
     )
 
@@ -188,13 +190,15 @@ def generate_scenes(duration: float, out_path: Path, seed: int | None = None) ->
         src = (
             f"gradients=s={WIDTH}x{HEIGHT}:rate={FPS}:"
             f"c0={c0}:c1={c1}:c2={c2}:c3={c3}:nb_colors=4"
-            f":speed={rng.uniform(0.010, 0.028):.4f}:duration={per_scene + 1:.3f}"
+            f":speed={rng.uniform(0.06, 0.12):.4f}:duration={per_scene + 1:.3f}"
         )
         seg = seg_dir / f"scene_{index}.mp4"
         _run([
             "ffmpeg", "-y", "-loglevel", "error",
             "-f", "lavfi", "-i", src,
-            "-vf", f"gblur=sigma=38,{_scene_filters()}",
+            # Light blur only: a heavy blur flattens the colours into one another
+            # and the moving gradient becomes invisible.
+            "-vf", f"gblur=sigma=6,{_scene_filters()}",
             "-t", f"{per_scene:.3f}",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
             str(seg),

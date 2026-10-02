@@ -245,7 +245,18 @@ def produce(job_id: str, req: dict) -> None:
 
         target = float(req["duration"]) if req.get("duration") else None
         speech = None
-        if req.get("auto_script") and req.get("topic"):
+        if req.get("auto_script") and req.get("topic") and target:
+            # The topic panel asks for an initial draft sized to the requested
+            # duration; regenerate it here (otherwise the fitting loop inherits
+            # a script built for a different duration and cannot converge).
+            script = script_writer.write_script(
+                req.get("topic", ""),
+                duration=max(1, round(target)),
+                language=req.get("language", "français"),
+                style=req.get("style", ""),
+                tone=req.get("tone", ""),
+                rate=req.get("rate", tts.DEFAULT_RATE),
+            )
             # Fit the narration to the requested duration (max 3 TTS passes);
             # a user-supplied text is respected as-is.
             speech, script = _fit_speech(script, req, target, work)

@@ -165,8 +165,8 @@
       <div>
         <label for="stock">Images</label>
         <select id="stock">
-          <option value="0" selected>Visuels générés</option>
-          <option value="1">Vidéos stock (Pexels/Pixabay)</option>
+          <option value="1" selected>Vidéos stock (Pexels/Pixabay)</option>
+          <option value="0">Visuels générés</option>
         </select>
       </div>
     </div>
@@ -292,8 +292,8 @@
       <div>
         <label for="b-stock">Source des visuels</label>
         <select id="b-stock">
-          <option value="0" selected>Visuels générés</option>
-          <option value="1">Vidéos stock (Pexels/Pixabay)</option>
+          <option value="1" selected>Vidéos stock (Pexels/Pixabay)</option>
+          <option value="0">Visuels générés</option>
         </select>
       </div>
       <div>
@@ -583,9 +583,14 @@ $('gen-script').addEventListener('click', async ()=>{
       body: JSON.stringify({topic, duration: parseInt($('duration').value)})});
     if(!r.ok) throw new Error((await r.json()).detail || 'Erreur');
     $('text-topic').value = (await r.json()).script;
+    delete $('text-topic').dataset.edited;
   }catch(e){ alert('Script impossible : '+e.message); }
   finally{ btn.disabled = false; btn.textContent = 'Générer le script'; }
 });
+
+// A hand-edited script is authoritative: it disables duration auto-fitting so
+// the user's words are never silently rewritten.
+$('text-topic').addEventListener('input', ()=>{ $('text-topic').dataset.edited = '1'; });
 
 function setPill(kind, text){
   const p = $('pill'); p.style.display='inline-block'; p.className='pill '+kind; p.textContent=text;
@@ -608,7 +613,8 @@ async function generate(){
   $('bar').style.width='2%'; $('step').textContent='Envoi…'; setPill('run','En cours');
 
   const body = {
-    text: text, topic: topic, auto_script: false,
+    text: text, topic: topic, auto_script: isTopic && !$('text-topic').dataset.edited,
+    duration: parseInt($('duration').value),
     voice: $('voice').value, rate: $('rate').value,
     query: $('query').value || 'city night vertical',
     use_stock: $('stock').value === '1',
@@ -665,11 +671,17 @@ function showMeta(meta){
   $('m-tags').innerHTML = (meta.hashtags||[]).map(t=>`<span class="tag">#${t}</span>`).join('') || '—';
   const vs = meta.visual_source;
   if(vs){
-    const label = vs === 'local_fallback'
-      ? 'Visuels animés générés (aucune vidéo stock utilisée)'
-      : (meta.visual_sources && meta.visual_sources.length
-          ? `Vraies vidéos : ${meta.visual_sources.join(' + ')}`
-          : 'Clips importés utilisés');
+    const cache = meta.visual_cache || {};
+    const hits = cache.hits || 0, misses = cache.misses || 0;
+    let label;
+    if(vs === 'local_fallback'){
+      label = 'Visuels animés générés (aucune vidéo stock utilisée)';
+    } else if(meta.visual_sources && meta.visual_sources.length){
+      label = `Vraies vidéos : ${meta.visual_sources.join(' + ')}`;
+      if(hits || misses) label += ` — ${hits} en cache, ${misses} téléchargée(s)`;
+    } else {
+      label = 'Clips importés utilisés';
+    }
     $('m-source').textContent = label;
     $('m-source').style.display = 'block';
   } else {
