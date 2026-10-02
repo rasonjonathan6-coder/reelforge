@@ -88,6 +88,10 @@ an mp4 + a JSON sidecar (provider url/id, width/height/duration, timestamps).
   UI must send it; a topic-script drafted for another duration cannot be retimed
   by rewriting alone (LLM output length varies), so `produce()` re-drafts at the
   target before `_fit_speech`.
+- Dialogue fitting converges only if the local generator can produce a script
+  *shorter* than the target. `_local_dialogue` must fill up to the word budget,
+  not stop at a whole template cycle (~105 words), otherwise short reels (~30 s)
+  can never reach their target and `_fit_speech` loops on the same length.
 - Stock clips are looped with `-stream_loop -1` then cut with `-t`, so short
   clips fill a longer scene without freezing.
 - Docker daemon needs `sudo -n`; build with `sudo -n docker build -t reelforge .`.
