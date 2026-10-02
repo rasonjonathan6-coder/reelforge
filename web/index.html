@@ -65,6 +65,11 @@
   .tag{background:#0e0e17;border:1px solid var(--line);border-radius:99px;padding:4px 10px;font-size:12.5px;color:#c3b6ff}
   .free{margin-top:16px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
   .hint{font-size:12px;color:var(--muted);margin:-4px 0 14px}
+  .colab-box{margin:6px 0 16px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#0e0e17}
+  .colab-box summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--text,#e7e7ea)}
+  .colab-box[open] summary{margin-bottom:8px}
+  .colab-box p.hint{margin:6px 0}
+  .prompts-out{width:100%;min-height:150px;margin:10px 0 6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.5;white-space:pre;overflow:auto}
   .check{display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.45;text-transform:none;letter-spacing:0;color:var(--text,#e7e7ea);cursor:pointer}
   .check input{width:auto;margin:2px 0 0;flex:0 0 auto}
   input[type=file]{width:100%;font-size:12px;color:var(--muted)}
@@ -247,6 +252,21 @@
     </div>
     <div class="hint" id="clipsHint">Dépose ici des plans générés par IA (Wan, LTX…). Ils remplacent les visuels automatiques.</div>
     <div class="hint">Références de personnages : une image par personnage, nommée d'après lui (<b>Léa.png</b>, <b>Tom.jpg</b>). Le personnage garde les couleurs et l'identité de l'image dans toutes les scènes — il n'est plus redessiné à chaque plan.</div>
+
+    <details class="colab-box">
+      <summary>🎬 Vrais plans IA (photoréaliste) — Colab GPU gratuit</summary>
+      <p class="hint">ReelForge écrit le script et le montage ; ce bloc prépare les <b>prompts anglais</b> que le notebook Colab gratuit utilise pour générer de vrais plans vidéo IA (Wan 2.1, Apache 2.0). Colle le JSON ci-dessous dans la cellule 3 du notebook, puis dépose les clips obtenus dans « Clips IA générés ».</p>
+      <div class="row" style="margin-top:10px">
+        <div>
+          <button class="ghost" id="make-prompts" style="margin-top:0">Préparer les prompts Colab</button>
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="ghost" id="copy-prompts" style="margin-top:0">Copier le JSON</button>
+        </div>
+      </div>
+      <textarea id="prompts-out" class="prompts-out" readonly placeholder="Clique sur « Préparer les prompts Colab »…"></textarea>
+      <div class="hint" id="prompts-hint">Modèle libre, aucune clé requise. Le GPU T4 de Colab est gratuit ; sa disponibilité n'est pas garantie par Google.</div>
+    </details>
 
     <button class="primary" id="go">Générer ma vidéo</button>
     <div class="free">Aucune inscription, aucune limite. <b>Gratuit pour toujours</b> — script (LLM gratuit), voix (edge-tts), visuels et montage (FFmpeg) tournent côté serveur, sans coût par vidéo.</div>
@@ -706,6 +726,39 @@ $('gen-script').addEventListener('click', async ()=>{
     delete $('text-topic').dataset.edited;
   }catch(e){ alert('Script impossible : '+e.message); }
   finally{ btn.disabled = false; btn.textContent = 'Générer le script'; }
+});
+
+// Colab bridge: turn the current script/topic into English video prompts the
+// free GPU notebook can paste in. The JSON carries the model settings too, so
+// the notebook and the site cannot drift apart.
+function currentScript(){
+  const topicPane = !$('pane-topic').classList.contains('hidden');
+  return topicPane ? $('text-topic').value.trim() : $('text').value.trim();
+}
+$('make-prompts').addEventListener('click', async ()=>{
+  const topic = $('topic').value.trim();
+  const script = currentScript();
+  if(!script && topic.length < 3){ alert('Renseigne un sujet ou écris un script.'); return; }
+  const btn = $('make-prompts'); btn.disabled = true; btn.textContent = 'Préparation…';
+  try{
+    const r = await fetch('/api/video-prompts',{method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({topic, script, duration: parseInt($('duration').value),
+        dialogue: $('dialogue').checked, rate: $('rate').value,
+        dialogue_cast: $('dialogue-cast') ? $('dialogue-cast').value : ''})});
+    if(!r.ok) throw new Error((await r.json()).detail || 'Erreur');
+    const data = await r.json();
+    $('prompts-out').value = JSON.stringify(data, null, 2);
+    $('prompts-hint').innerHTML = `${data.count} prompt(s) prêt(s) pour <b>${escapeHtml(data.settings.model)}</b>. `+
+      `Colle ce JSON dans la cellule 3 de <b>${escapeHtml(data.notebook)}</b>.`;
+  }catch(e){ alert('Prompts impossibles : '+e.message); }
+  finally{ btn.disabled = false; btn.textContent = 'Préparer les prompts Colab'; }
+});
+$('copy-prompts').addEventListener('click', async ()=>{
+  const box = $('prompts-out');
+  if(!box.value){ alert('Prépare d\'abord les prompts.'); return; }
+  try{ await navigator.clipboard.writeText(box.value); $('copy-prompts').textContent = 'Copié ✓'; }
+  catch(e){ box.select(); document.execCommand('copy'); $('copy-prompts').textContent = 'Copié ✓'; }
+  setTimeout(()=>{ $('copy-prompts').textContent = 'Copier le JSON'; }, 1500);
 });
 
 // A hand-edited script is authoritative: it disables duration auto-fitting so

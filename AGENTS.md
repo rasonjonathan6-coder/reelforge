@@ -102,6 +102,20 @@ an mp4 + a JSON sidecar (provider url/id, width/height/duration, timestamps).
 - Tests isolate the cache via `tests/conftest.py`; never let a test touch the
   real `data/cache/`.
 
+## Free AI video clips (`pipeline/video_prompts.py` + Colab)
+Real photoreal clips need a GPU, which the CPU-only server does not have. The
+free path is a Colab notebook, and this module is the bridge:
+`POST /api/video-prompts` turns a topic or a ready script into English
+Wan/LTX prompts plus the model settings and negative prompt, and the notebook
+(`colab/ReelForge_Video_IA_Colab.ipynb`) pastes that JSON into cell 3.
+Generated clips come back through `POST /api/upload-clips`, then flow into
+`visuals.Background` as the `ai_clips` source (highest priority).
+- `translate()` is keyword translation, not MT: whole-word matching only
+  (`algorithme` must not be hit by the `algo` entry), multi-word entries first.
+- `MAX_SCENE_WORDS` caps each caption; longer captions add artefacts.
+- The model/settings live in this module so the API and the notebook cannot
+  drift. Never put a paid API key in the notebook path — it is the free one.
+
 ## Dialogue and music
 - A character script is `Nom: réplique` lines (`script_writer.write_dialogue_script`,
   parsed by `parse_dialogue`). `tts.synthesize_dialogue` renders each turn with its

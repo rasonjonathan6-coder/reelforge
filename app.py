@@ -29,7 +29,7 @@ from config import (
     WORKER_COUNT,
 )
 from jobs import CLIP_SUFFIXES, OUTPUT_DIR, Job, load, produce, save
-from pipeline import music, script_writer, stock_cache, tts, visuals
+from pipeline import music, script_writer, stock_cache, tts, video_prompts, visuals
 
 
 @asynccontextmanager
@@ -83,6 +83,18 @@ class ScriptRequest(BaseModel):
     dialogue: bool = False
     dialogue_cast: str = ""
     rate: str = tts.DEFAULT_RATE
+
+
+class VideoPromptsRequest(BaseModel):
+    """Prompts for the free GPU notebook: either a topic or a ready script."""
+
+    topic: str = ""
+    script: str = ""
+    duration: int = Field(45, ge=5, le=90)
+    dialogue: bool = False
+    dialogue_cast: str = ""
+    rate: str = tts.DEFAULT_RATE
+    max_scenes: int = Field(8, ge=1, le=20)
 
 
 class BatchRequest(BaseModel):
@@ -198,6 +210,40 @@ def generate_script(req: ScriptRequest) -> dict:
         return {"script": script, "dialogue": False}
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"Génération du script impossible : {exc}")
+
+
+@app.post("/api/video-prompts")
+def make_video_prompts(req: VideoPromptsRequest) -> dict:
+    """Ready-to-use English prompts for the free GPU video notebook.
+
+    The notebook cannot translate a French script, so this endpoint turns the
+    script into Wan/LTX prompts and returns the matching settings; the user
+    pastes the list into Colab, then uploads the clips back here.
+    """
+    script = req.script.strip()
+    topic = req.topic.strip()
+    try:
+        if not script:
+            if len(topic) < 3:
+                raise HTTPException(
+                    400, "Renseigne un sujet (3 caractères min) ou colle un script.")
+            if req.dialogue:
+                turns, script = script_writer.write_dialogue_script(
+                    topic, duration=req.duration, rate=req.rate)
+                del turns
+            else:
+                script = script_writer.write_script(
+                    topic, duration=req.duration, rate=req.rate)
+        result = video_prompts.prompts_for(
+            script, topic=topic, duration=req.duration, max_scenes=req.max_scenes)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Préparation des prompts impossible : {exc}")
+    result["script"] = script
+    result["topic"] = topic
+    result["notebook"] = "colab/ReelForge_Video_IA_Colab.ipynb"
+    return result
 
 
 @app.post("/api/upload-clips")

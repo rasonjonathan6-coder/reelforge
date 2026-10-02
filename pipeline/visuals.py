@@ -309,6 +309,20 @@ def scene_queries(topic: str, script: str, count: int) -> list[str]:
     return queries_for_texts(topic, _scene_texts(script, count))
 
 
+def scene_texts_for(script: str, duration: float,
+                    cap: int | None = None) -> list[str]:
+    """One text per scene for a whole reel, sized to `duration`.
+
+    Public wrapper around the internal scene split, so callers that need the
+    scene texts themselves (not search queries) do not reach into a private
+    helper. `cap` folds an over-long list into that many contiguous scenes.
+    """
+    texts = _scene_texts(script, _scene_count(duration))
+    if cap and len(texts) > cap:
+        texts = _fold_groups(texts, cap)
+    return texts
+
+
 def _place_words(place: str) -> list[str]:
     """Words of a detected place, kept even when short (e.g. "rue", "mer")."""
     words = re.findall(r"[A-Za-zÀ-ÿ]{3,}", (place or "").lower())
