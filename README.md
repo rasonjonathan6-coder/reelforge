@@ -13,7 +13,11 @@ vignette et métadonnées** (titre, description, hashtags).
 | Vraie vidéo 30-60 s, format Reels/TikTok/Shorts | ✅ |
 | Script généré depuis un sujet | ✅ générateur local intégré (sans clé) ou LLM gratuit optionnel |
 | Voix off IA (edge-tts, 400+ voix, 100+ langues) | ✅ gratuit, illimité |
+| Dialogue ou monologue (voix par personnage selon le script) | ✅ cases « Dialogue » dans l'interface |
+| Distribution des voix : mixte, femme+femme, homme+homme | ✅ sélecteur « Voix des personnages » |
 | Sous-titres animés synchronisés mot par mot | ✅ fade + mot actif en couleur |
+| Couleur de sous-titre par personnage | ✅ un personnage = une couleur |
+| Musique de fond générée (humeur déduite du script, duckée sous la voix) | ✅ synthétisée par FFmpeg, sans asset payant |
 | Visuels qui bougent (scènes animées, transitions, grain) | ✅ |
 | Vidéos stock gratuites (Pexels **ou** Pixabay, clés gratuites) | ✅ une recherche par scène, la source utilisée est affichée |
 | Cache local des clips stock (réutilise les plans déjà téléchargés) | ✅ moins d'appels API et de téléchargements sur les sujets répétés |
@@ -154,7 +158,8 @@ GEMINI_API_KEY=xxx python app.py         # aistudio.google.com → clé gratuite
 | GET | `/api/batch/{id}` | Statut de chaque job du lot + compteurs |
 | GET | `/api/batch/{id}/download` | ZIP des vidéos terminées du lot |
 | GET | `/api/jobs/{id}` | Statut, progression, vidéo, vignette, métadonnées |
-| GET | `/api/voices` | Liste des voix |
+| GET | `/api/voices` | Liste des voix (avec genre et locale) |
+| GET | `/api/music` | Humeurs musicales disponibles |
 | POST | `/api/upload-clips` | Upload de clips IA → dossier réutilisable |
 | GET | `/api/config` | Backends actifs + limites batch + état du cache |
 | GET | `/videos/{...}.mp4` | Téléchargement |
@@ -167,6 +172,19 @@ curl -X POST localhost:8000/api/script -H 'Content-Type: application/json' \
 # Vidéo
 curl -X POST localhost:8000/api/generate -H 'Content-Type: application/json' \
   -d '{"text":"Ton script...","voice":"fr-FR-VivienneMultilingualNeural","rate":"-5%","use_stock":false}'
+
+# Dialogue : le nombre de voix suit le script (1 personnage = 1 voix)
+curl -X POST localhost:8000/api/generate -H 'Content-Type: application/json' \
+  -d '{"topic":"le café réveille-t-il vraiment ?","dialogue":true,"duration":30,"music":true}'
+
+# Distribution des voix : "mixte" (défaut, homme + femme), "femme" (femme+femme)
+# ou "homme" (homme+homme). Le champ est aussi accepté par /api/script.
+curl -X POST localhost:8000/api/generate -H 'Content-Type: application/json' \
+  -d '{"topic":"deux amies parlent du café","dialogue":true,"dialogue_cast":"femme","duration":30}'
+
+# Musique de fond : humeur auto (déduite du script) ou forcée
+curl -X POST localhost:8000/api/generate -H 'Content-Type: application/json' \
+  -d '{"text":"Ton script...","music":true,"music_mood":"epique"}'
 
 # Vidéo montée depuis tes propres clips IA
 curl -X POST localhost:8000/api/upload-clips -F "files=@clip1.mp4" -F "files=@clip2.mp4"
@@ -278,8 +296,9 @@ config.py             → configuration par variables d'environnement
 generate.py           → orchestrateur + CLI
 pipeline/script_writer.py → script + métadonnées (générateur local, LLM optionnel)
 pipeline/thumbnail.py → vignette (fond IA + titre Pillow)
-pipeline/tts.py       → edge-tts + timings mot par mot
-pipeline/subtitles.py → sous-titres ASS karaoké (fade + mot actif)
+pipeline/tts.py       → edge-tts + timings mot par mot (et dialogue multi-voix)
+pipeline/subtitles.py → sous-titres ASS karaoké (fade + mot actif, couleur par personnage)
+pipeline/music.py     → musique de fond générée (humeur détectée) + ducking sous la voix
 pipeline/visuals.py   → stock Pexels/Pixabay (une recherche par scène) ou scènes animées
 pipeline/stock_cache.py → cache local des clips stock (clé SHA-256, TTL, purge LRU)
 pipeline/overlay.py   → barre de progression + signature (drawtext)

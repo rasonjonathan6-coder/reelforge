@@ -201,7 +201,7 @@ def test_provider_failure_falls_back_to_local(tmp_path, monkeypatch):
 def test_zoompan_keeps_source_motion(tmp_path):
     """`d` must not swallow the clip's frames: a moving clip and a still image
     must not render identically under the scene filter."""
-    from PIL import Image, ImageChops, ImageStat
+    from PIL import Image, ImageChops
 
     def still(path):
         subprocess.run(

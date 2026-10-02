@@ -22,7 +22,7 @@ design; they assert real durations with ffprobe rather than mocking ffmpeg.
 - `jobs.py` — job model, persistence, `produce()` (shared by single and batch).
 - `batch.py` — batch registry, bounded dispatch, ZIP.
 - `generate.py` — orchestrator + CLI.
-- `pipeline/` — `script_writer`, `tts`, `subtitles`, `visuals`, `stock_cache`, `compose`, `overlay`, `thumbnail`, `storage`.
+- `pipeline/` — `script_writer`, `tts`, `subtitles`, `music`, `visuals`, `stock_cache`, `compose`, `overlay`, `thumbnail`, `storage`.
 - `web/index.html` — single-file UI (no build step).
 
 ## Conventions
@@ -57,6 +57,25 @@ an mp4 + a JSON sidecar (provider url/id, width/height/duration, timestamps).
   (`pexels_cache` / `pexels_api` / `reused`) and `meta.visual_cache` counters.
 - Tests isolate the cache via `tests/conftest.py`; never let a test touch the
   real `data/cache/`.
+
+## Dialogue and music
+- A character script is `Nom: réplique` lines (`script_writer.write_dialogue_script`,
+  parsed by `parse_dialogue`). `tts.synthesize_dialogue` renders each turn with its
+  own voice and concatenates the takes (never mixes), so word timings stay exact.
+  The cast follows the script: one name keeps a single voice, two or more names
+  take the `dialogue_cast` distribution — `mixte` (default: man + woman, the
+  user's voice for character #1 and the opposite gender for #2), `femme`
+  (femme+femme) or `homme` (homme+homme) via `tts.resolve_cast` /
+  `tts.cast_genders` (the latter normalises accents and the UI labels).
+  `WordTiming.speaker` drives per-character subtitle colours
+  (`subtitles.speaker_palette`). Never pad a one-character script to two voices.
+- Music (`pipeline/music.py`) is synthesised by FFmpeg (`aevalsrc` chord loop +
+  lowpass/echo/tremolo), never a paid asset. Mood is inferred from topic/script
+  unless `music_mood` is set. It is mixed *after* composition so the bed matches
+  the final video length; `sidechaincompress` ducks it under the voice.
+  Music is cosmetic: a failure must never fail the job.
+- `tremolo` needs named options (`f=…:d=…`): a positional second value is a parse
+  error ("No option name near ..."), so the value must carry the `d=` prefix.
 
 ## Gotchas
 - Do NOT pass a per-scene frame count to `zoompan`'s `d`; it freezes the frame
