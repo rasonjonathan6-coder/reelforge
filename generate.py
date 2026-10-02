@@ -207,6 +207,7 @@ def generate(
     rate: str = tts.DEFAULT_RATE,
     query: str = "city night vertical",
     use_stock: bool = True,
+    visual_source: str = "",
     work_dir: Path | None = None,
     clips: list[Path] | None = None,
     logo_text: str | None = None,
@@ -280,6 +281,7 @@ def generate(
         scene_places = [place] * len(scene_places)
     visuals_info = visuals.build_background_info(
         duration, tmp, query=query, use_stock=use_stock, clips=clips,
+        visual_source=visual_source,
         topic=topic, script=text,
         scene_texts=scene_texts, scene_weights=scene_weights,
         scene_places=scene_places, scene_pans=scene_pans,
@@ -467,6 +469,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--voice", default=tts.DEFAULT_VOICE)
     parser.add_argument("--rate", default=tts.DEFAULT_RATE)
     parser.add_argument("--query", default="city night vertical", help="Stock search terms")
+    parser.add_argument("--visual-source", default="",
+                        choices=["", "stock", "ai_images"],
+                        help="stock (Pexels/Pixabay) or ai_images (free AI images)")
     parser.add_argument("--no-stock", action="store_true", help="Skip stock, use generated visuals")
     parser.add_argument(
         "--clips",
@@ -605,6 +610,7 @@ def main() -> None:
         rate=args.rate,
         query=args.query,
         use_stock=not args.no_stock,
+        visual_source=args.visual_source,
         work_dir=work,
         clips=clips,
         logo_text=args.logo,

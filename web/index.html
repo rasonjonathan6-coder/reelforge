@@ -185,7 +185,8 @@
         <label for="stock">Images</label>
         <select id="stock">
           <option value="1" selected>Vidéos stock (Pexels/Pixabay)</option>
-          <option value="0">Visuels générés</option>
+          <option value="ai_images">Images IA générées (gratuit, sans clé)</option>
+          <option value="0">Visuels animés générés</option>
         </select>
       </div>
     </div>
@@ -376,7 +377,8 @@
         <label for="b-stock">Source des visuels</label>
         <select id="b-stock">
           <option value="1" selected>Vidéos stock (Pexels/Pixabay)</option>
-          <option value="0">Visuels générés</option>
+          <option value="ai_images">Images IA générées (gratuit, sans clé)</option>
+          <option value="0">Visuels animés générés</option>
         </select>
       </div>
       <div>
@@ -486,9 +488,10 @@ async function loadConfig(){
 function renderStockHint(){
   const providers = cfg.stock_providers || [];
   const ok = cfg.stock_available;
+  const aiNote = ' « Images IA générées » crée un visuel photoréaliste par scène (gratuit, sans clé, aucun compte) avec un léger zoom.';
   const text = ok
-    ? `Vidéos stock disponibles via ${providers.map(p=>p[0].toUpperCase()+p.slice(1)).join(' + ')}. Chaque scène cherche son propre plan.`
-    : `Aucune clé Pexels/Pixabay configurée : le mode « Vidéos stock » utilisera les visuels animés générés. Ajoute PEXELS_API_KEY ou PIXABAY_API_KEY pour de vraies vidéos.`;
+    ? `Vidéos stock disponibles via ${providers.map(p=>p[0].toUpperCase()+p.slice(1)).join(' + ')}. Chaque scène cherche son propre plan.` + aiNote
+    : `Aucune clé Pexels/Pixabay configurée : le mode « Vidéos stock » utilisera les visuels animés générés. Ajoute PEXELS_API_KEY ou PIXABAY_API_KEY pour de vraies vidéos.` + aiNote;
   ['stock-hint','b-stock-hint'].forEach(id=>{
     const el = $(id); if(!el) return;
     el.textContent = text;
@@ -572,6 +575,7 @@ async function launchBatch(){
     rate: $('b-rate').value,
     query: $('b-query').value || 'city night vertical',
     use_stock: $('b-stock').value === '1',
+    visual_source: $('b-stock').value === 'ai_images' ? 'ai_images' : '',
     dialogue: $('b-dialogue') && $('b-dialogue').checked,
     dialogue_cast: $('b-dialogue-cast') ? $('b-dialogue-cast').value : '',
     music: $('b-music') ? $('b-music').value === '1' : true,
@@ -793,6 +797,7 @@ async function generate(){
     voice: $('voice').value, rate: $('rate').value,
     query: $('query').value || 'city night vertical',
     use_stock: $('stock').value === '1',
+    visual_source: $('stock').value === 'ai_images' ? 'ai_images' : '',
     music: $('music').value === '1',
     music_mood: $('music-mood').value,
     logo: ($('logo').value || '').trim(),

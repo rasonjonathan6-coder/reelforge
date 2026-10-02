@@ -19,6 +19,7 @@ vignette et métadonnées** (titre, description, hashtags).
 | Couleur de sous-titre par personnage | ✅ un personnage = une couleur |
 | Musique de fond générée (humeur déduite du script, duckée sous la voix) | ✅ synthétisée par FFmpeg, sans asset payant |
 | Visuels qui bougent (scènes animées, transitions, grain) | ✅ |
+| **Images IA photoréalistes** (Pollinations, **sans clé ni compte**) | ✅ un visuel par scène, zoom lent — généré dans l'app |
 | Vidéos stock gratuites (Pexels **ou** Pixabay, clés gratuites) | ✅ une recherche par scène, la source utilisée est affichée |
 | Cache local des clips stock (réutilise les plans déjà téléchargés) | ✅ moins d'appels API et de téléchargements sur les sujets répétés |
 | Import de clips IA générés (Colab / Wan / LTX) | ✅ ils remplacent les visuels auto |
@@ -116,6 +117,9 @@ Sans `S3_PUBLIC_BASE_URL`, l'API renvoie une URL présignée (7 jours).
 | `STORAGE_BACKEND` | `local` | `local` ou `s3` |
 | `S3_BUCKET`, `S3_PREFIX`, `S3_ENDPOINT_URL`, `S3_REGION` | — | stockage objet |
 | `S3_PUBLIC_BASE_URL` | — | base CDN pour liens directs |
+| `AI_IMAGE_BASE_URL` | `https://image.pollinations.ai` | service d'images IA gratuit (aucune clé) |
+| `AI_IMAGE_MODEL` | `sdxl` | modèle d'image ; `flux`/`turbo` exigent désormais un compte payant |
+| `AI_IMAGE_ATTEMPTS` | `6` | tentatives par image (le service gratuit limite le débit) |
 | `PEXELS_API_KEY` | — | active les vidéos stock Pexels (clé gratuite) |
 | `PIXABAY_API_KEY` | — | active les vidéos stock Pixabay (clé gratuite) |
 | `PEXELS_CACHE_ENABLED` | `true` | cache local des clips stock |
@@ -299,7 +303,8 @@ pipeline/thumbnail.py → vignette (fond IA + titre Pillow)
 pipeline/tts.py       → edge-tts + timings mot par mot (et dialogue multi-voix)
 pipeline/subtitles.py → sous-titres ASS karaoké (fade + mot actif, couleur par personnage)
 pipeline/music.py     → musique de fond générée (humeur détectée) + ducking sous la voix
-pipeline/visuals.py   → stock Pexels/Pixabay (une recherche par scène) ou scènes animées
+pipeline/ai_images.py → images IA gratuites (Pollinations, sans clé) → clips à zoom lent
+pipeline/visuals.py   → stock Pexels/Pixabay (une recherche par scène), images IA ou scènes animées
 pipeline/stock_cache.py → cache local des clips stock (clé SHA-256, TTL, purge LRU)
 pipeline/overlay.py   → barre de progression + signature (drawtext)
 pipeline/compose.py   → montage final 9:16
@@ -313,6 +318,8 @@ pipeline/storage.py   → stockage local ou S3
 - API image indisponible → fond de vignette en dégradé.
 - Pexels/Pixabay indisponible ou sans clé → scènes animées générées par FFmpeg,
   et la source réellement utilisée est indiquée dans l'UI et dans `meta.visual_source`.
+- Images IA (Pollinations) indisponibles → repli direct sur les scènes animées :
+  la source choisie n'est jamais remplacée en silence par une autre.
 - FFmpeg sans `drawtext` → habillage ignoré, la vidéo se termine quand même.
 - Redis indisponible → repli automatique sur le pool local.
 

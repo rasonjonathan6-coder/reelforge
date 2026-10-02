@@ -391,6 +391,7 @@ def produce(job_id: str, req: dict) -> None:
             rate=req.get("rate", tts.DEFAULT_RATE),
             query=req.get("query", "city night vertical"),
             use_stock=req.get("use_stock", True),
+            visual_source=req.get("visual_source", ""),
             work_dir=work / ".work",
             clips=clips,
             logo_text=req.get("logo") or None,
@@ -427,6 +428,7 @@ def produce(job_id: str, req: dict) -> None:
                 visuals_meta = {}
         (work / "scenes.json").write_text(
             json.dumps({"use_stock": req.get("use_stock", True),
+                        "visual_source": req.get("visual_source", ""),
                         "query": req.get("query", ""),
                         "clips": [c.name for c in (clips or [])],
                         "source": visuals_meta.get("source", "local_fallback"),

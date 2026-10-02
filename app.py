@@ -66,6 +66,7 @@ class GenerateRequest(BaseModel):
     rate: str = tts.DEFAULT_RATE
     query: str = "city night vertical"
     use_stock: bool = True
+    visual_source: str = ""
     music: bool = True
     music_mood: str = ""
     logo: str = ""
@@ -107,6 +108,7 @@ class BatchRequest(BaseModel):
     rate: str = tts.DEFAULT_RATE
     query: str = "city night vertical"
     use_stock: bool = True
+    visual_source: str = ""
     dialogue: bool = False
     dialogue_cast: str = ""
     music: bool = True

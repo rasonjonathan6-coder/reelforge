@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from config import PEXELS_CACHE_TTL_DAYS
-from pipeline import stock_cache
+from pipeline import ai_images, stock_cache
 
 WIDTH, HEIGHT = 1080, 1920
 FPS = 30
@@ -76,6 +76,7 @@ SOURCE_LABELS = {
     "pexels": "Vidéos Pexels utilisées",
     "pixabay": "Vidéos Pixabay utilisées",
     "ai_clips": "Clips IA utilisés",
+    "ai_images": "Images IA générées",
     "local_fallback": "Aucune vidéo stock disponible — fallback local utilisé",
 }
 
@@ -113,6 +114,8 @@ def source_message(sources: list[str]) -> str:
         parts.append("Vidéos " + " + ".join(s.capitalize() for s in stock) + " utilisées")
     if "ai_clips" in sources:
         parts.append(SOURCE_LABELS["ai_clips"])
+    if "ai_images" in sources:
+        parts.append(SOURCE_LABELS["ai_images"])
     if "local_fallback" in sources:
         parts.append("complété par le fallback animé")
     return " · ".join(parts) if parts else SOURCE_LABELS["local_fallback"]
@@ -691,6 +694,7 @@ def build_background_info(
     query: str = "city night vertical",
     use_stock: bool = True,
     clips: list[Path] | None = None,
+    visual_source: str = "",
     topic: str = "",
     script: str = "",
     scene_texts: list[str] | None = None,
@@ -718,6 +722,22 @@ def build_background_info(
         _montage(selected, duration, work_dir, out_path, weights=scene_weights,
                  pans=scene_pans)
         return Background(out_path, ["ai_clips"], [], [c.name for c in selected])
+
+    if visual_source == "ai_images":
+        texts = scene_texts or _scene_texts(script, _scene_count(duration))
+        pans = scene_pans if scene_pans and len(scene_pans) == len(texts) else None
+        generated = ai_images.generate_scene_clips(
+            topic or query, texts, work_dir / "ai_images", pans=pans,
+        )
+        if generated:
+            _montage(generated, duration, work_dir, out_path, pans=pans)
+            return Background(out_path, ["ai_images"], [], [c.name for c in generated])
+        # The user picked AI images explicitly: if the free service is down we
+        # go straight to the local fallback rather than silently switching to
+        # stock footage they did not ask for.
+        print("[visuals] images IA indisponibles — fallback local utilisé")
+        generate_scenes(duration, out_path)
+        return Background(out_path, ["local_fallback"], [], [])
 
     queries: list[str] = []
     if use_stock:
@@ -753,6 +773,7 @@ def build_background(
     query: str = "city night vertical",
     use_stock: bool = True,
     clips: list[Path] | None = None,
+    visual_source: str = "",
     topic: str = "",
     script: str = "",
     scene_texts: list[str] | None = None,
@@ -763,7 +784,7 @@ def build_background(
     """Backwards-compatible wrapper returning only the background path."""
     return build_background_info(
         duration, work_dir, query=query, use_stock=use_stock,
-        clips=clips, topic=topic, script=script,
+        clips=clips, visual_source=visual_source, topic=topic, script=script,
         scene_texts=scene_texts, scene_weights=scene_weights,
         scene_places=scene_places, scene_pans=scene_pans,
     ).path

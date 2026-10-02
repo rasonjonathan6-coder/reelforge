@@ -31,7 +31,7 @@ design; they assert real durations with ffprobe rather than mocking ffmpeg.
 - Each job renders into its own dir `output/<batch>/<job>/`; never mix files.
 - Progress is reported through real pipeline stages via `on_step(stage, progress)`.
 - Visual source is tracked and surfaced honestly in `meta.visual_source`
-  (`pexels` / `pixabay` / `ai_clips` / `local_fallback`) and in `scenes.json` +
+  (`pexels` / `pixabay` / `ai_clips` / `ai_images` / `local_fallback`) and in `scenes.json` +
   `visuals.json`. Do not claim stock footage that was not actually used.
 - Duration accuracy: `pipeline/tts.py` retimes the voice-over to the target;
   keep final duration within ~1 s of the requested 30/45/60 s.
@@ -79,8 +79,9 @@ animation) -> FFmpeg assembly (concat + burned captions + muxed voice + music).
   git-ignored `.env` and are never read from source.
 
 ## Visuals priority order
-1. caller-supplied `clips` (AI scenes), 2. Pexels (`PEXELS_API_KEY`),
-3. Pixabay (`PIXABAY_API_KEY`), 4. multi-scene animated gradients.
+1. caller-supplied `clips` (AI scenes), 2. `visual_source="ai_images"`
+(free Pollinations images), 3. Pexels (`PEXELS_API_KEY`),
+4. Pixabay (`PIXABAY_API_KEY`), 5. multi-scene animated gradients.
 Stock search is per scene (`visuals.scene_queries`), one query per narration
 chunk, portrait renditions preferred, joined with `xfade` cross-dissolves.
 `PEXELS_API_BASE` / `PIXABAY_API_BASE` override the provider host (used to test
@@ -101,6 +102,21 @@ an mp4 + a JSON sidecar (provider url/id, width/height/duration, timestamps).
   (`pexels_cache` / `pexels_api` / `reused`) and `meta.visual_cache` counters.
 - Tests isolate the cache via `tests/conftest.py`; never let a test touch the
   real `data/cache/`.
+
+## Free AI images (`pipeline/ai_images.py`) — the in-site default
+No GPU, no key, no account: Pollinations (`https://image.pollinations.ai`)
+returns a real generated image per scene, which `image_to_clip()` turns into
+a short clip with a slow zoom + grain so the reel still moves. This is the
+free path that needs nothing outside the app.
+- Only the `sdxl` model is free now; `flux`/`turbo` return HTTP 402.
+- The free endpoint throttles (402 when the anonymous quota is busy), so
+  `fetch_image()` retries (`AI_IMAGE_ATTEMPTS`) and pauses between scenes.
+- `AI_IMAGE_BASE_URL` / `AI_IMAGE_MODEL` / `AI_IMAGE_ATTEMPTS` tune it.
+- Honest limit: these are animated stills (camera motion only), not true
+  subject motion. Never present them as real footage.
+- If every image fails, the job falls back to `local_fallback`; it never
+  silently swaps in stock footage the user did not choose.
+- Tests serve a local PNG via a fake HTTP server; they never hit the network.
 
 ## Free AI video clips (`pipeline/video_prompts.py` + Colab)
 Real photoreal clips need a GPU, which the CPU-only server does not have. The
