@@ -133,7 +133,12 @@ def _generate_animated(speech, text, out_path, tmp, info_out, duration, *,
                        character_style="anime", animation_provider=None,
                        music_enabled=True, music_mood=None, logo_text=None,
                        topic="", speakers=None, on_step=None) -> Path:
-    """Real animated-character reel: every scene is drawn frame by frame."""
+    """Real animated-character reel: every scene is drawn frame by frame.
+
+    Captions, the progress bar/logo, the voice-over and the music bed are all
+    applied in a single FFmpeg pass inside the engine, so a 1080x1920 reel is
+    not re-encoded four times (which is what made long renders look stuck).
+    """
     lines = _dialogue_lines(text, speech)
     if not lines:
         lines = [("Narrateur", text.strip()[:160] or "Reel")]
@@ -142,36 +147,39 @@ def _generate_animated(speech, text, out_path, tmp, info_out, duration, *,
     if not ass.exists():
         ass = subtitles.build_ass(speech.words, ass, speakers=speakers)
 
+    # Generate the bed up front so it can be mixed in the same pass as the video.
+    music_bed = None
+    music_meta = {}
+    if music_enabled:
+        try:
+            chosen = music_mood if music_mood in music.MOODS else music.detect_mood(topic, text)
+            music_bed = music.generate(duration, tmp / "music.mp3",
+                                       mood=chosen, topic=topic, script=text)
+            music_meta = {"mood": chosen, "label": music.MOODS[chosen]["label"]}
+        except Exception as exc:  # noqa: BLE001 - music is optional
+            print(f"      -> musique ignorée ({exc})")
+            music_bed = None
+
     result = animation.generate_animated_reel(
         speech, lines, out_path, tmp / "animation",
         target_duration=duration, voice_map=voices,
         environment=script_understanding.detect_place(text),
         visual_style=character_style, provider_name=animation_provider,
-        captions=ass, audio_path=speech.audio_path, on_step=on_step,
+        captions=ass, audio_path=speech.audio_path, music_bed=music_bed,
+        logo_text=logo_text, on_step=on_step,
     )
     print(f"      -> {len(result.scenes)} scènes animées, provider « {result.provider} »")
-
-    if logo_text or overlay.available():
-        try:
-            overlaid = tmp / "overlay.mp4"
-            overlay.add_overlay(out_path, overlaid, duration, logo_text=logo_text)
-            shutil.move(str(overlaid), str(out_path))
-        except Exception as exc:  # noqa: BLE001 - overlay is cosmetic, never fatal
-            print(f"      -> overlay skipped ({exc})")
-
-    if music_enabled:
-        try:
-            meta = music.build(out_path, tmp, duration, mood=music_mood, topic=topic, script=text)
-            shutil.move(meta["path"], str(out_path))
-            print(f"      -> musique « {meta['label']} » (voix duckée)")
-        except Exception as exc:  # noqa: BLE001 - music is optional
-            print(f"      -> musique ignorée ({exc})")
+    if music_meta:
+        print(f"      -> musique « {music_meta['label']} » (voix duckée)")
 
     if info_out:
         info_out.mkdir(parents=True, exist_ok=True)
         animation.write_animation_info(result, info_out)
         shutil.copy(speech.audio_path, info_out / "audio.mp3")
         shutil.copy(ass, info_out / "subtitles.ass")
+        if music_meta:
+            (info_out / "music.json").write_text(
+                json.dumps(music_meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return out_path
 
 

@@ -181,3 +181,32 @@ def test_scene_clips_are_not_identical(tmp_path):
     )
     assert len(result.scene_clips) == 2
     assert result.scene_clips[0].read_bytes() != result.scene_clips[1].read_bytes()
+
+
+def test_single_pass_mixes_voice_and_music_over_a_silent_video(tmp_path):
+    """The finalize pass must work when the assembled video has no audio track.
+
+    The animation clips are video-only, so the voice and the bed are added in
+    the same filtergraph. The voice feeds `sidechaincompress` and the mix, so
+    it has to be split — a plain label is consumed by the first consumer and
+    `amix` then fails to bind.
+    """
+    from pipeline import music
+
+    speech = _Speech([], tmp_path / "silent.mp3", 6.0)
+    _make_audio(speech.audio_path, 6.0)
+    bed = music.generate(6.0, tmp_path / "music.mp3", mood="calme")
+    out = tmp_path / "mixed.mp4"
+    animation.generate_animated_reel(
+        speech, [("Goku", "Une réplique assez longue pour être audible")],
+        out, tmp_path / "work",
+        target_duration=6.0, environment="parc",
+        audio_path=speech.audio_path, music_bed=bed,
+    )
+    streams = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type",
+         "-of", "csv=p=0", str(out)],
+        capture_output=True, text=True, timeout=60,
+    ).stdout.split()
+    assert "video" in streams and "audio" in streams
+    assert out.stat().st_size > 0

@@ -15,6 +15,7 @@ import subprocess
 import urllib.request
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -22,6 +23,37 @@ from PIL import Image, ImageDraw
 from pipeline import avatars
 
 WIDTH, HEIGHT, FPS = 1080, 1920, 30
+
+# Detected once, then reused: "libx264" or "h264_nvenc".
+_ENCODER: str | None = None
+
+
+def encoder_args(preset: str = "veryfast", crf: str = "21") -> list[str]:
+    """Prefer the GPU encoder when the box has one; fall back to libx264.
+
+    The engine pushes a lot of 1080x1920 frames, so NVENC turns minutes into
+    seconds where it is available. Detected once and cached.
+    """
+    global _ENCODER
+    if _ENCODER is None:
+        _ENCODER = "libx264"
+        if os.environ.get("REELFORGE_HW_ENCODE", "1") != "0":
+            try:
+                encoders = subprocess.run(
+                    ["ffmpeg", "-hide_banner", "-encoders"],
+                    capture_output=True, text=True, timeout=30).stdout
+                if "h264_nvenc" in encoders:
+                    probe = subprocess.run(
+                        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                         "-i", "color=c=black:s=256x256:d=0.2", "-c:v", "h264_nvenc",
+                         "-f", "null", "-"], capture_output=True, text=True, timeout=60)
+                    if probe.returncode == 0:
+                        _ENCODER = "h264_nvenc"
+            except Exception:  # noqa: BLE001 - detection is best effort
+                pass
+    if _ENCODER == "h264_nvenc":
+        return ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", crf, "-pix_fmt", "yuv420p"]
+    return ["-c:v", "libx264", "-preset", preset, "-crf", crf, "-pix_fmt", "yuv420p"]
 
 
 class AnimationFailed(RuntimeError):
@@ -87,15 +119,26 @@ def _env_palette(env: str):
     return _PALETTES.get((env or "").strip().lower(), _DEFAULT_ENV)
 
 
-def _backdrop(env: str, t: float, camera: str) -> Image.Image:
-    """One animated environment frame; the motifs drift with `t`."""
-    top, mid, accent = _env_palette(env)
+@lru_cache(maxsize=32)
+def _gradient(env: str) -> Image.Image:
+    """Vertical gradient for an environment. The 240 rectangles it takes to
+    build it are the single most expensive part of a frame, and it never
+    changes, so it is drawn once per environment and reused."""
+    top, mid, _ = _env_palette(env)
     img = Image.new("RGB", (WIDTH, HEIGHT), top)
     draw = ImageDraw.Draw(img)
     for y in range(0, HEIGHT, 8):
         frac = y / HEIGHT
         color = tuple(int(top[i] + (mid[i] - top[i]) * frac) for i in range(3))
         draw.rectangle((0, y, WIDTH, y + 8), fill=color)
+    return img
+
+
+def _backdrop(env: str, t: float, camera: str) -> Image.Image:
+    """One animated environment frame; the motifs drift with `t`."""
+    _, mid, accent = _env_palette(env)
+    img = _gradient(env).copy()
+    draw = ImageDraw.Draw(img)
     drift = int(40 * math.sin(2 * math.pi * t / 6))
     if camera == "tracking":
         drift += int((t * 120) % 200) - 100
@@ -130,8 +173,7 @@ class LocalAnimationProvider(AnimationProvider):
             ["ffmpeg", "-y", "-loglevel", "error",
              "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{WIDTH}x{HEIGHT}",
              "-r", str(FPS), "-i", "-",
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
-             "-pix_fmt", "yuv420p", str(out)],
+             *encoder_args(), str(out)],
             stdin=subprocess.PIPE,
         )
         assert proc.stdin is not None

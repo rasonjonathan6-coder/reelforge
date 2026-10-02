@@ -211,14 +211,14 @@ def mix_into_video(
     fade_out_start = max(0.0, duration - FADE_OUT)
     filter_complex = (
         f"[0:a]aformat=sample_rates={SAMPLE_RATE}:channel_layouts=mono,"
-        f"anull[voice];"
+        f"asplit=2[voice][voice2];"
         f"[1:a]aformat=sample_rates={SAMPLE_RATE}:channel_layouts=mono,"
         f"volume={MUSIC_GAIN},"
         f"afade=t=in:st=0:d={min(FADE_IN, duration / 3):.2f},"
         f"afade=t=out:st={fade_out_start:.2f}:d={min(FADE_OUT, duration / 3):.2f}[mus];"
         f"[mus][voice]sidechaincompress="
         f"threshold=0.05:ratio=8:attack=15:release=350:makeup=1[duck];"
-        f"[voice][duck]amix=inputs=2:duration=first:normalize=0,"
+        f"[voice2][duck]amix=inputs=2:duration=first:normalize=0,"
         f"alimiter=limit=0.95[aout]"
     )
     subprocess.run(

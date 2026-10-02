@@ -753,11 +753,15 @@ async function generate(){
   }catch(e){ fail(e.message); return; }
 
   clearInterval(timer);
+  const startedAt = Date.now();
   timer = setInterval(async ()=>{
     try{
       const r = await fetch('/api/jobs/'+jobId); const j = await r.json();
       $('bar').style.width = Math.max(2, j.progress)+'%';
-      $('step').textContent = j.step || '…';
+      const elapsed = Math.round((Date.now()-startedAt)/1000);
+      const mm = String(Math.floor(elapsed/60)).padStart(2,'0');
+      const ss = String(elapsed%60).padStart(2,'0');
+      $('step').textContent = `${j.step || '…'} · ${mm}:${ss}`;
       if(j.status === 'completed' || j.status === 'done' || j.done){
         clearInterval(timer); $('go').disabled=false; $('bar').style.width='100%';
         $('step').textContent='Terminé'; setPill('done','Prêt');

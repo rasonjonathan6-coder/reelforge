@@ -153,3 +153,10 @@ an mp4 + a JSON sidecar (provider url/id, width/height/duration, timestamps).
   clips fill a longer scene without freezing.
 - Docker daemon needs `sudo -n`; build with `sudo -n docker build -t reelforge .`.
 - `.env` holds secrets and is git-ignored; never commit it or echo its values.
+- In an FFmpeg `filter_complex`, a stream label can be consumed only once.
+  The voice has to feed both `sidechaincompress` and `amix`, so it is emitted
+  through `asplit=2[voice][voice2]`. Without the split, `amix` fails to bind and
+  FFmpeg exits with "Stream specifier '...' matches no streams" (exit 234).
+- A long render can *look* stuck because the fit loop re-drafts and re-synthesises
+  the dialogue up to `MAX_DURATION_ATTEMPTS` (3) times before the animation even
+  starts. The UI shows elapsed time next to the step for this reason.
