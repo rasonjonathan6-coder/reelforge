@@ -59,6 +59,24 @@ animation) -> FFmpeg assembly (concat + burned captions + muxed voice + music).
 - Lip-sync reuses `pipeline/avatars.py` (`viseme`, `draw_frame`), driven by the
   real TTS word timings, so the mouth matches the voice.
 - Reports are archived per job: `animation_scenes.json`, `characters.json`.
+- `providers.Local3DAnimationProvider` (style `cartoon_3d`, or
+  `--animation-provider local3d`) drives `pipeline/animation/render3d.py`, a
+  software 3D engine with no GPU and no external service. One scene is a real
+  perspective render: triangle rasteriser + z-buffer, Lambert shading with a
+  key/fill/rim rig, specular, a floor/wall set, a cast shadow and a background
+  gradient. `RenderSettings.preset(name)` picks `draft`/`standard`/
+  `cinematic`/`photoreal`/`anime`; `photoreal` and `cinematic` supersample
+  (1.25x / 1.15x) before downsampling. `FilmLook` then adds bloom, shallow
+  depth of field (autofocus follows the head's screen position), a filmic
+  highlight roll-off (blended ACES curve — lit skin must not clip to flat
+  white, or the face loses its eyes/brows/mouth at close-up), warm/cool grade,
+  chromatic aberration, unsharp mask, vignette and grain. The set geometry is
+  built once per scene (`static_tris`) and reused for every frame.
+- Character references: a portrait named after the speaker locks that
+  character's palette across all scenes. API/`jobs`: `characters_dir`; CLI:
+  `--character-references <folder>`; the registry (`pipeline/avatars`) is
+  cleared before each job. `PEXELS_API_KEY` / NVIDIA keys live only in the
+  git-ignored `.env` and are never read from source.
 
 ## Visuals priority order
 1. caller-supplied `clips` (AI scenes), 2. Pexels (`PEXELS_API_KEY`),
