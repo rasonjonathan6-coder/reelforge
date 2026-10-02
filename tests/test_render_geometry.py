@@ -53,6 +53,7 @@ def reload_modules():
         ("VIDEO_WIDTH", "1080"),
         ("VIDEO_HEIGHT", "1920"),
         ("VIDEO_FPS", "30"),
+        ("VIDEO_TRANSITION", "0.6"),
         ("FFMPEG_THREADS", "1"),
         ("FFMPEG_PRESET", "veryfast"),
     ):
@@ -103,3 +104,78 @@ def test_ffmpeg_calls_cap_threads():
             if '"loglevel", "error",' in line and "FFMPEG_THREADS" not in line:
                 offenders.append(f"{path.name}: {line.strip()}")
     assert not offenders, "encodes without -threads cap:\n" + "\n".join(offenders)
+
+
+def test_pipeline_modules_import_every_config_constant_they_use():
+    """Regression: thumbnail.py used FFMPEG_THREADS without importing it.
+
+    That NameError fired at the 92% metadata/thumbnail stage - the exact
+    failure users reported. Comparing each module's AST against the names it
+    actually has bound catches the whole class of bug without a render.
+    """
+    import ast
+    from pathlib import Path
+
+    import config
+
+    constants = {
+        name for name in dir(config)
+        if name.isupper() and not name.startswith("_")
+    }
+    root = Path(__file__).resolve().parent.parent / "pipeline"
+    problems = []
+    for path in sorted(root.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        bound = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    bound.add(alias.asname or alias.name)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    bound.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                bound.add(node.id)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                bound.add(node.name)
+            elif isinstance(node, ast.arg):
+                bound.add(node.arg)
+            elif isinstance(node, ast.alias):
+                bound.add(node.asname or node.name)
+        used = {
+            node.id for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+        }
+        missing = sorted((used & constants) - bound)
+        if missing:
+            problems.append(f"{path.name}: {', '.join(missing)}")
+    assert not problems, "config constants used but not imported:\n" + "\n".join(problems)
+
+
+def test_hard_cuts_join_with_concat(monkeypatch, reload_modules, tmp_path):
+    """VIDEO_TRANSITION=0 must avoid xfade, which decodes every scene at once."""
+    import subprocess
+
+    _, mods = reload_modules(monkeypatch, VIDEO_TRANSITION="0")
+    visuals = mods["pipeline.visuals"]
+    assert visuals.TRANSITION == 0
+
+    segments = []
+    for index in range(3):
+        seg = tmp_path / f"s{index}.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+             "color=c=navy:size=108x192:rate=30:duration=2",
+             "-c:v", "libx264", "-pix_fmt", "yuv420p", str(seg)],
+            check=True, capture_output=True, timeout=120,
+        )
+        segments.append(seg)
+
+    out = visuals._join_xfade_timed(segments, [1.0, 1.0, 1.0], 6.0, tmp_path / "joined.mp4")
+    assert out.exists() and out.stat().st_size > 0
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", str(out)],
+        capture_output=True, text=True, check=True,
+    )
+    assert abs(float(probe.stdout.strip()) - 6.0) < 0.3

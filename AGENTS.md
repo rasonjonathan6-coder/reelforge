@@ -107,8 +107,13 @@ an mp4 + a JSON sidecar (provider url/id, width/height/duration, timestamps).
 `render.yaml` is the source of truth for the deployment limits:
 - `WORKER_COUNT=1` / `MAX_CONCURRENT_JOBS=1` - one render at a time. Two
   parallel FFmpeg jobs are what OOM-kill the instance.
-- `VIDEO_WIDTH=720` / `VIDEO_HEIGHT=1280` - half the pixels of 1080x1920.
-  Raise to 1080x1920 only on a paid instance.
+- `VIDEO_WIDTH=648` / `VIDEO_HEIGHT=1152` / `VIDEO_FPS=30` - about a third
+  of the pixels of 1080x1920. Measured in a 512 MB container on a 40s reel:
+  ~281 MB peak here, OOM-kill at 720x1280 (~474 MB). Raise to 1080x1920 only
+  on a paid instance.
+- `VIDEO_TRANSITION=0` - hard cuts joined with the concat demuxer instead of
+  `xfade`. xfade decodes every scene at once and is the memory peak; concat
+  streams them. Set back to `0.6` on a paid instance.
 - `FFMPEG_THREADS=1`, `FFMPEG_PRESET=veryfast` - minimum x264 footprint.
 All geometry lives in `config.py`; `visuals`, `compose`, `ai_images`,
 `overlay`, `thumbnail` and `subtitles` (PlayRes) import it, so subtitles stay

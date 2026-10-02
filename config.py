@@ -42,6 +42,10 @@ VIDEO_FPS = int(os.environ.get("VIDEO_FPS", "30"))
 # budget of a free instance; raise it when the host has real CPU and RAM.
 FFMPEG_THREADS = int(os.environ.get("FFMPEG_THREADS", "1"))  # 1 keeps a single encode in RAM
 FFMPEG_PRESET = os.environ.get("FFMPEG_PRESET", "veryfast")
+# Cross-dissolve between scenes. 0 switches to hard cuts joined with the
+# concat demuxer, which streams the segments instead of decoding them all at
+# once - the difference between OOM and success on a 512 MB instance.
+VIDEO_TRANSITION = float(os.environ.get("VIDEO_TRANSITION", "0.6"))
 
 # Storage: "local" disk or "s3" (any S3-compatible endpoint: AWS, R2, MinIO...).
 STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND", "local")

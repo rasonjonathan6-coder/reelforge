@@ -117,6 +117,7 @@ Sans `S3_PUBLIC_BASE_URL`, l'API renvoie une URL présignée (7 jours).
 | `MAX_CONCURRENT_JOBS` | `2` | rendus simultanés maximum |
 | `VIDEO_WIDTH` / `VIDEO_HEIGHT` | `1080` / `1920` | géométrie de sortie ; baissez sur une petite machine |
 | `VIDEO_FPS` | `30` | images par seconde |
+| `VIDEO_TRANSITION` | `0.6` | fondu entre scènes ; `0` = coupes franches (RAM minimale) |
 | `FFMPEG_PRESET` | `veryfast` | compromis vitesse/qualité x264 |
 | `FFMPEG_THREADS` | `1` | threads x264 par encodage (1 = empreinte RAM minimale) |
 | `STORAGE_BACKEND` | `local` | `local` ou `s3` |
@@ -291,8 +292,15 @@ même image, la variable `PORT` est respectée.
 simultanés (ou un seul montage final en 1080×1920) déclenchent l'OOM killer :
 le conteneur redémarre, le job disparaît (stocké en mémoire) et l'interface
 affiche une erreur de parsing JSON. `render.yaml` configure donc `WORKER_COUNT=1`,
-`MAX_CONCURRENT_JOBS=1`, `VIDEO_WIDTH/HEIGHT=720x1280`, `FFMPEG_THREADS=1` et
-`FFMPEG_PRESET=veryfast`. Remettez 1080×1920 sur une instance payante.
+`MAX_CONCURRENT_JOBS=1`, `VIDEO_WIDTH/HEIGHT=648x1152`, `VIDEO_FPS=30`,
+`VIDEO_TRANSITION=0`, `FFMPEG_THREADS=1` et `FFMPEG_PRESET=veryfast`.
+
+Mesures sur un conteneur plafonné à 512 Mo, pour un reel de 40 s : 648×1152
+culmine à ~281 Mo (aucun OOM) tandis que 720×1280 se fait tuer (~474 Mo). Le
+`VIDEO_TRANSITION=0` remplace le fondu `xfade` par des coupes franches via le
+démuxeur `concat`, qui diffuse les scènes l'une après l'autre au lieu de les
+décoder toutes en parallèle. Remettez 1080×1920 et `VIDEO_TRANSITION=0.6` sur
+une instance payante.
 
 ⚠️ Sur les hébergeurs à disque éphémère (Render free, Fly sans volume), les
 vidéos de `output/` **et le cache de clips** disparaissent au redémarrage. Pour

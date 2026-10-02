@@ -29,6 +29,7 @@ from config import (
     PEXELS_CACHE_TTL_DAYS,
     VIDEO_FPS,
     VIDEO_HEIGHT,
+    VIDEO_TRANSITION,
     VIDEO_WIDTH,
 )
 from pipeline import ai_images, stock_cache
@@ -41,7 +42,7 @@ FPS = VIDEO_FPS
 # when no portrait exists; its real width/height are recorded in the cache meta.
 REQUEST_ORIENTATION = "portrait"
 
-TRANSITION = 0.6  # cross-dissolve duration, seconds
+TRANSITION = VIDEO_TRANSITION  # cross-dissolve duration, seconds (0 = hard cuts)
 SCENE_SECONDS = 4.0  # target on-screen time per generated scene
 MAX_STOCK_SCENES = 8  # cap on stock searches per reel (keeps downloads sane)
 MIN_CLIP_SECONDS = 1.0  # ignore stock entries too short to be usable
@@ -144,6 +145,27 @@ def _join_xfade(segments: list[Path], duration: float, out_path: Path) -> Path:
     return _join_xfade_timed(segments, weights, duration, out_path)
 
 
+def _join_concat(segments: list[Path], duration: float, out_path: Path) -> Path:
+    """Hard-cut the segments with the concat demuxer.
+
+    Unlike `xfade`, which holds every input open and decodes them in parallel,
+    concat streams the segments one after another, so peak memory stays flat
+    however long the video is. The only cost is losing the cross-dissolve.
+    """
+    listing = out_path.parent / "concat.txt"
+    listing.write_text(
+        "".join(f"file '{seg.resolve()}'\n" for seg in segments), encoding="utf-8"
+    )
+    _run([
+        "ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS),
+        "-f", "concat", "-safe", "0", "-i", str(listing),
+        "-t", f"{duration:.3f}",
+        "-c:v", "libx264", "-preset", FFMPEG_PRESET, "-crf", "22",
+        "-pix_fmt", "yuv420p", str(out_path),
+    ])
+    return out_path
+
+
 def _join_xfade_timed(segments: list[Path], weights: list[float], duration: float,
                       out_path: Path) -> Path:
     """Cross-dissolve segments whose on-screen time follows `weights`.
@@ -155,10 +177,13 @@ def _join_xfade_timed(segments: list[Path], weights: list[float], duration: floa
     if len(segments) == 1:
         _run([
             "ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS), "-i", str(segments[0]),
-            "-t", f"{duration:.3f}", "-c:v", "libx264", "-preset", "veryfast",
+            "-t", f"{duration:.3f}", "-c:v", "libx264", "-preset", FFMPEG_PRESET,
             "-crf", "22", "-pix_fmt", "yuv420p", str(out_path),
         ])
         return out_path
+
+    if TRANSITION <= 0:
+        return _join_concat(segments, duration, out_path)
 
     total = sum(weights) or float(len(weights))
     inputs: list[str] = []
@@ -178,14 +203,20 @@ def _join_xfade_timed(segments: list[Path], weights: list[float], duration: floa
         prev = label
     filter_complex = ";".join(steps)
 
-    _run([
-        "ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS), *inputs,
-        "-filter_complex", filter_complex,
-        "-map", prev,
-        "-t", f"{duration:.3f}",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
-        str(out_path),
-    ])
+    try:
+        _run([
+            "ffmpeg", "-y", "-loglevel", "error", "-threads", str(FFMPEG_THREADS), *inputs,
+            "-filter_complex", filter_complex,
+            "-map", prev,
+            "-t", f"{duration:.3f}",
+            "-c:v", "libx264", "-preset", FFMPEG_PRESET, "-crf", "22", "-pix_fmt", "yuv420p",
+            str(out_path),
+        ])
+    except RuntimeError:
+        # xfade is the memory peak of the whole render: it holds every scene
+        # open at once. On a small host it gets OOM-killed, so fall back to a
+        # streamed concat rather than losing the job.
+        _join_concat(segments, duration, out_path)
     return out_path
 
 

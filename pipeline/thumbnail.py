@@ -14,7 +14,7 @@ from urllib.parse import quote
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
-from config import VIDEO_HEIGHT, VIDEO_WIDTH
+from config import FFMPEG_THREADS, VIDEO_HEIGHT, VIDEO_WIDTH
 
 WIDTH, HEIGHT = VIDEO_WIDTH, VIDEO_HEIGHT
 IMAGE_URL = "https://image.pollinations.ai"
